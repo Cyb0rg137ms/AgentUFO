@@ -1,0 +1,2 @@
+# Core server uses the Python standard library.
+# Optional numerical experiment: python -m pip install -e ".[qdit]"
