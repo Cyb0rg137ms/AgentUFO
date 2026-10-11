@@ -20,6 +20,7 @@ from functools import wraps
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from agent_core.permissions import WorkspacePolicy, PermissionDenied
 
 
 def _synchronized(method):
@@ -82,9 +83,13 @@ class WorkspaceManager:
     durable lock state in .agentufo/locks.json, and atomic mutations.
     """
 
-    def __init__(self, workspace_root: Optional[Union[str, Path]] = None, root_dir: Optional[Union[str, Path]] = None) -> None:
+    def __init__(self, workspace_root: Optional[Union[str, Path]] = None, root_dir: Optional[Union[str, Path]] = None,
+                 policy: Optional[WorkspacePolicy] = None) -> None:
         self._mutex = threading.RLock()
         self.root = Path(workspace_root or root_dir or os.getcwd()).resolve()
+        if policy is not None and policy.root != self.root:
+            raise ValueError("WorkspacePolicy.root must match workspace_root")
+        self.policy = policy or WorkspacePolicy(root=self.root)
         self.agentufo_dir = self.root / ".agentufo"
         self.locks_file = self.agentufo_dir / "locks.json"
         self.staging_dir = self.agentufo_dir / "staging"
@@ -96,6 +101,7 @@ class WorkspaceManager:
     def rebase_root(self, new_root: Union[str, Path]) -> None:
         """Re-targets workspace to an active project directory, reloading locks."""
         self.root = Path(new_root).resolve()
+        self.policy = WorkspacePolicy(root=self.root)
         self.agentufo_dir = self.root / ".agentufo"
         self.locks_file = self.agentufo_dir / "locks.json"
         self.staging_dir = self.agentufo_dir / "staging"
@@ -108,7 +114,7 @@ class WorkspaceManager:
         (self.agentufo_dir / "backups").mkdir(parents=True, exist_ok=True)
         (self.agentufo_dir / "staging").mkdir(parents=True, exist_ok=True)
 
-    def _normalize_rel_path(self, target_path: Union[str, Path]) -> str:
+    def _normalize_rel_path(self, target_path: Union[str, Path], operation: str = "read") -> str:
         """Normalize a path and reject traversal or symlink escapes from the workspace."""
         p = Path(target_path)
         if any(part == ".." for part in p.parts):
@@ -120,6 +126,10 @@ class WorkspaceManager:
         rel = resolved.relative_to(self.root)
         if not rel.parts:
             raise ValueError("Workspace root is not a file path")
+        try:
+            self.policy.resolve(resolved, operation)
+        except PermissionDenied as exc:
+            raise ValueError(str(exc)) from exc
         return str(rel).replace("\\", "/")
 
     @_synchronized
@@ -340,7 +350,7 @@ class WorkspaceManager:
         Writes proposed file changes into the workspace staging area.
         Does NOT corrupt the repository file before Review Gate verification!
         """
-        rel_path = self._normalize_rel_path(target_path)
+        rel_path = self._normalize_rel_path(target_path, operation="write")
         seat_stage_dir = self.staging_dir / seat_id
         seat_stage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -364,7 +374,7 @@ class WorkspaceManager:
         """
         Atomically commits staged file into real workspace destination path upon review pass.
         """
-        rel_path = self._normalize_rel_path(target_path)
+        rel_path = self._normalize_rel_path(target_path, operation="write")
         staged_path = self.staging_dir / seat_id / rel_path
         if not staged_path.exists():
             raise PathNotFoundError(f"No staged changes found for '{rel_path}' by seat '{seat_id}'.")
@@ -433,7 +443,7 @@ class WorkspaceManager:
         Writes content to disk atomically.
         Validates that seat_id owns the path lock!
         """
-        rel_path = self._normalize_rel_path(target_path)
+        rel_path = self._normalize_rel_path(target_path, operation="write")
         lock = self.get_lock(rel_path)
 
         if not lock:

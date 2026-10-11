@@ -1,0 +1,18 @@
+{
+  "routes": [
+    {
+      "name": "local-ollama",
+      "provider": "ollama",
+      "model": "qwen2.5-coder:7b",
+      "price_input_per_million": 0.0,
+      "price_output_per_million": 0.0
+    },
+    {
+      "name": "cloud-example",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "price_input_per_million": 0.15,
+      "price_output_per_million": 0.60
+    }
+  ]
+}

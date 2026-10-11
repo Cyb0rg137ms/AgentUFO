@@ -1,21 +1,15 @@
-"""
-dag_executor.py
-===============
-Dependency-Aware DAG & Antichain Parallel Execution Engine for LOGOS.
+"""Dependency-aware concurrent execution with fail-closed DAG validation.
 
-Instead of running a flat list of tasks in a generic pool, this engine:
-1. Structures decomposed subtasks into a formal directed acyclic graph G = (V, E).
-2. Computes concurrent antichains (sets of independent tasks whose prerequisites are met).
-3. Concurrently executes each antichain in parallel worker threads.
-4. Dynamically schedules downstream tasks as soon as their exact dependencies resolve.
+Independent ready nodes run concurrently; dependent nodes become eligible as soon as
+all dependencies finish. Invalid graphs never execute any work.
 """
-
 from __future__ import annotations
 
 import concurrent.futures
+import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set
 
 
 class TaskStatus(str, Enum):
@@ -24,11 +18,11 @@ class TaskStatus(str, Enum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
 
 
 @dataclass
 class DAGTaskNode:
-    """A node in the dependency execution DAG."""
     id: str
     name: str
     payload: Any
@@ -38,172 +32,172 @@ class DAGTaskNode:
     result: Any = None
     error: Optional[str] = None
     layer: int = 1
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "dependencies": list(self.dependencies),
-            "dependents": list(self.dependents),
-            "status": self.status.value,
-            "layer": self.layer,
-            "has_result": self.result is not None,
-            "error": self.error,
-        }
+        return {"id": self.id, "name": self.name, "dependencies": sorted(self.dependencies),
+                "dependents": sorted(self.dependents), "status": self.status.value,
+                "layer": self.layer, "has_result": self.result is not None, "error": self.error,
+                "started_at": self.started_at, "finished_at": self.finished_at}
+
+
+class DAGValidationError(ValueError):
+    """The graph contains unknown dependencies, a cycle, or duplicate task IDs."""
 
 
 class DependencyDAG:
-    """
-    Direct Acyclic Graph of executable subtasks with antichain computation.
-    """
-
     def __init__(self) -> None:
         self.nodes: Dict[str, DAGTaskNode] = {}
 
-    def add_task(
-        self,
-        task_id: str,
-        name: str,
-        payload: Any,
-        dependencies: Optional[List[str]] = None,
-        layer: int = 1,
-    ) -> DAGTaskNode:
+    def add_task(self, task_id: str, name: str, payload: Any,
+                 dependencies: Optional[List[str]] = None, layer: int = 1) -> DAGTaskNode:
+        if not task_id or task_id in self.nodes:
+            raise DAGValidationError(f"Task id must be non-empty and unique: {task_id!r}")
         deps = set(dependencies or [])
-        node = DAGTaskNode(
-            id=task_id,
-            name=name,
-            payload=payload,
-            dependencies=deps,
-            layer=layer,
-        )
+        if task_id in deps:
+            raise DAGValidationError(f"Task {task_id!r} cannot depend on itself")
+        node = DAGTaskNode(id=task_id, name=name, payload=payload, dependencies=deps, layer=layer)
         self.nodes[task_id] = node
-
-        # Update reverse dependencies
-        for d in deps:
-            if d in self.nodes:
-                self.nodes[d].dependents.add(task_id)
-
-        # Update forward dependents for any pre-registered nodes
-        for other_id, other_node in self.nodes.items():
-            if task_id in other_node.dependencies:
+        for dep_id in deps:
+            if dep_id in self.nodes:
+                self.nodes[dep_id].dependents.add(task_id)
+        for other_id, other in self.nodes.items():
+            if task_id in other.dependencies:
                 node.dependents.add(other_id)
-
         return node
 
+    def validate(self) -> List[List[DAGTaskNode]]:
+        unknown = {dep for n in self.nodes.values() for dep in n.dependencies if dep not in self.nodes}
+        if unknown:
+            raise DAGValidationError("Unknown dependency IDs: " + ", ".join(sorted(unknown)))
+        degree = {nid: len(node.dependencies) for nid, node in self.nodes.items()}
+        ready = sorted(nid for nid, d in degree.items() if d == 0)
+        waves: List[List[DAGTaskNode]] = []
+        processed: Set[str] = set()
+        while ready:
+            wave_ids = ready
+            waves.append([self.nodes[nid] for nid in wave_ids])
+            next_ready: List[str] = []
+            for nid in wave_ids:
+                processed.add(nid)
+                for child in sorted(self.nodes[nid].dependents):
+                    degree[child] -= 1
+                    if degree[child] == 0:
+                        next_ready.append(child)
+            ready = sorted(next_ready)
+        if len(processed) != len(self.nodes):
+            cyclic = sorted(set(self.nodes) - processed)
+            raise DAGValidationError("Dependency cycle detected involving: " + ", ".join(cyclic))
+        return waves
+
     def get_ready_tasks(self) -> List[DAGTaskNode]:
-        """Returns all tasks whose dependencies are fully completed and not yet running."""
         ready = []
         for node in self.nodes.values():
-            if node.status == TaskStatus.PENDING:
-                all_deps_done = all(
-                    dep_id in self.nodes and self.nodes[dep_id].status == TaskStatus.COMPLETED
-                    for dep_id in node.dependencies
-                )
-                if all_deps_done:
-                    node.status = TaskStatus.READY
-                    ready.append(node)
+            if node.status == TaskStatus.PENDING and all(
+                self.nodes[d].status == TaskStatus.COMPLETED for d in node.dependencies
+            ):
+                node.status = TaskStatus.READY
+                ready.append(node)
         return ready
 
     def mark_running(self, task_id: str) -> None:
-        if task_id in self.nodes:
-            self.nodes[task_id].status = TaskStatus.RUNNING
+        node = self.nodes[task_id]
+        node.status, node.started_at = TaskStatus.RUNNING, time.time()
 
     def mark_completed(self, task_id: str, result: Any) -> None:
-        if task_id in self.nodes:
-            self.nodes[task_id].status = TaskStatus.COMPLETED
-            self.nodes[task_id].result = result
+        node = self.nodes[task_id]
+        node.status, node.result, node.finished_at = TaskStatus.COMPLETED, result, time.time()
 
     def mark_failed(self, task_id: str, error: str) -> None:
-        if task_id in self.nodes:
-            self.nodes[task_id].status = TaskStatus.FAILED
-            self.nodes[task_id].error = error
+        node = self.nodes[task_id]
+        node.status, node.error, node.finished_at = TaskStatus.FAILED, error[:4000], time.time()
 
     def is_finished(self) -> bool:
-        return all(node.status in (TaskStatus.COMPLETED, TaskStatus.FAILED) for node in self.nodes.values())
+        return all(n.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED)
+                   for n in self.nodes.values())
 
     def compute_antichains(self) -> List[List[DAGTaskNode]]:
-        """
-        Decomposes the DAG into sequential waves of concurrent antichains.
-        Tasks within the same antichain are completely mutually independent
-        and can be executed in parallel with zero contention.
-        """
-        in_degree: Dict[str, int] = {
-            nid: len([d for d in node.dependencies if d in self.nodes])
-            for nid, node in self.nodes.items()
-        }
-        chains: List[List[DAGTaskNode]] = []
-        processed: Set[str] = set()
-
-        while len(processed) < len(self.nodes):
-            current_wave = [
-                self.nodes[nid]
-                for nid, deg in in_degree.items()
-                if deg == 0 and nid not in processed
-            ]
-            if not current_wave:
-                # Cycle or orphaned nodes: break cycle by taking remaining lowest in-degree
-                remaining = [self.nodes[nid] for nid in in_degree if nid not in processed]
-                if remaining:
-                    current_wave = [remaining[0]]
-                else:
-                    break
-
-            chains.append(current_wave)
-            for node in current_wave:
-                processed.add(node.id)
-                for dep_id in node.dependents:
-                    if dep_id in in_degree:
-                        in_degree[dep_id] -= 1
-
-        return chains
+        return self.validate()
 
 
 class AntichainParallelExecutor:
-    """
-    Executes a DependencyDAG in parallel waves of antichains.
-    """
-
-    def __init__(self, max_workers: int = 4) -> None:
+    """Run DAG nodes concurrently up to ``max_workers`` with dependency-aware scheduling."""
+    def __init__(self, max_workers: int = 4, trace: Optional[Any] = None) -> None:
+        if max_workers < 1:
+            raise ValueError("max_workers must be >= 1")
         self.max_workers = max_workers
+        self.trace = trace
 
-    def execute_dag(
-        self,
-        dag: DependencyDAG,
-        worker_fn: Callable[[DAGTaskNode], Any],
-        progress_callback: Optional[Callable[[DAGTaskNode, int, int], None]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Executes all nodes in the DAG wave by wave, parallelizing each independent antichain.
-        Returns mapping of task_id -> result.
-        """
-        antichains = dag.compute_antichains()
-        total_tasks = len(dag.nodes)
-        completed_count = 0
+    def _emit(self, event: str, node: Optional[DAGTaskNode] = None, **fields: Any) -> None:
+        if self.trace is not None:
+            try:
+                self.trace.emit(event, task_id=node.id if node else None, fields=fields)
+            except Exception:
+                pass  # Trace storage failure must not corrupt scheduler state.
+
+    def execute_dag(self, dag: DependencyDAG, worker_fn: Callable[[DAGTaskNode], Any],
+                    progress_callback: Optional[Callable[[DAGTaskNode, int, int], None]] = None
+                    ) -> Dict[str, Any]:
+        # Validate before running a single task; do not silently break cycles.
+        dag.validate()
+        total = len(dag.nodes)
+        completed = 0
         results: Dict[str, Any] = {}
-
-        for wave_idx, antichain in enumerate(antichains):
-            # Mark all nodes in antichain as running
-            for node in antichain:
-                dag.mark_running(node.id)
-
-            # Execute antichain concurrently
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(self.max_workers, max(1, len(antichain)))) as executor:
-                future_to_node = {executor.submit(worker_fn, node): node for node in antichain}
-                for future in concurrent.futures.as_completed(future_to_node):
-                    node = future_to_node[future]
-                    completed_count += 1
+        running: Dict[concurrent.futures.Future[Any], DAGTaskNode] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers,
+                                                   thread_name_prefix="agentufo-worker") as pool:
+            while True:
+                # A failed prerequisite blocks all descendants rather than executing them.
+                changed = True
+                while changed:
+                    changed = False
+                    for node in dag.nodes.values():
+                        if node.status == TaskStatus.PENDING and any(
+                            dag.nodes[d].status in (TaskStatus.FAILED, TaskStatus.BLOCKED)
+                            for d in node.dependencies
+                        ):
+                            node.status = TaskStatus.BLOCKED
+                            node.error = "Blocked because a dependency failed or was blocked."
+                            node.finished_at = time.time()
+                            self._emit("task.blocked", node, error=node.error)
+                            results[node.id] = None
+                            completed += 1
+                            changed = True
+                ready_nodes = dag.get_ready_tasks()
+                for index, node in enumerate(ready_nodes):
+                    if len(running) >= self.max_workers:
+                        for deferred in ready_nodes[index:]:
+                            deferred.status = TaskStatus.PENDING
+                        break
+                    dag.mark_running(node.id)
+                    self._emit("task.started", node, dependencies=sorted(node.dependencies))
+                    running[pool.submit(worker_fn, node)] = node
+                if not running:
+                    if all(n.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED)
+                           for n in dag.nodes.values()):
+                        break
+                    # This should only be reachable if graph state was externally corrupted.
+                    pending = [n.id for n in dag.nodes.values() if n.status == TaskStatus.PENDING]
+                    raise DAGValidationError("Scheduler deadlock; pending tasks: " + ", ".join(pending))
+                done, _ = concurrent.futures.wait(running, return_when=concurrent.futures.FIRST_COMPLETED)
+                for future in done:
+                    node = running.pop(future)
+                    completed += 1
                     try:
-                        res = future.result()
-                        dag.mark_completed(node.id, res)
-                        results[node.id] = res
+                        result = future.result()
+                        dag.mark_completed(node.id, result)
+                        self._emit("task.completed", node, duration_ms=round((node.finished_at - node.started_at) * 1000, 3))
+                        results[node.id] = result
                     except Exception as exc:
-                        dag.mark_failed(node.id, str(exc))
+                        dag.mark_failed(node.id, f"{type(exc).__name__}: {exc}")
+                        self._emit("task.failed", node, error=node.error,
+                                   duration_ms=round((node.finished_at - node.started_at) * 1000, 3))
                         results[node.id] = None
-
                     if progress_callback:
                         try:
-                            progress_callback(node, completed_count, total_tasks)
+                            progress_callback(node, completed, total)
                         except Exception:
+                            # Telemetry must not turn successful work into a failed task.
                             pass
-
         return results

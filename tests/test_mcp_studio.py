@@ -30,7 +30,9 @@ class MCPStudioTests(unittest.TestCase):
             parameters=[MCPToolParameter(name="name", param_type="string", description="Name", required=True)],
             handler_code='return {"message": f"hello {name}"}',
         )
-        result = MCPSandboxTester().test_tool_execution(tool, {"name": "AgentUFO"})
+        # This unit test verifies JSON-RPC/handler semantics. Production defaults to
+        # container isolation; host mode is an explicit test-only opt-in here.
+        result = MCPSandboxTester(allow_unsafe_host=True).test_tool_execution(tool, {"name": "AgentUFO"})
         self.assertEqual(result["status"], "success", result.get("stderr"))
         self.assertEqual(result["jsonrpc"]["jsonrpc"], "2.0")
 

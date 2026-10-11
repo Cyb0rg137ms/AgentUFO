@@ -18,13 +18,22 @@ contents as untrusted input.
 
 ## Important limitations — not a security certification
 
-The current execution sandbox uses temporary directories and subprocess timeouts, but **a subprocess is
-not an OS security boundary**. Generated code may still have access to the host user’s permissions and
-network unless the operating system or an external sandbox restricts it. Do not expose this server to
-untrusted networks or run untrusted tasks with privileged credentials.
+Single-file Python/Node execution defaults to a Docker/Podman container with networking disabled,
+read-only root and source mounts, dropped Linux capabilities, no-new-privileges, and CPU/memory/PID
+limits. The required image must already exist locally; secure mode fails closed if the container runtime
+is unavailable. The explicit `mode="host"` / `AGENTUFO_SANDBOX_MODE=host` compatibility mode still uses
+host subprocesses and **is not an OS security boundary**. Secure multi-file project execution is not yet
+implemented and fails closed. Generated code should not run with privileged host credentials.
 
 Before a public/multi-user deployment, add authenticated access, CSRF/origin policy, per-user workspace
-isolation, a container/VM or OS sandbox with network and filesystem restrictions, secret isolation,
-resource quotas, structured audit logs, dependency pinning/SBOM, and a formal threat model. The default
-loopback binding is intentional.
+isolation, secure multi-file execution, end-to-end enforcement for every MCP adapter, secret isolation,
+resource quotas, structured audit retention, dependency pinning/SBOM, and a formal threat model. Validate
+the container path with adversarial tests on each supported OS. The default loopback binding is intentional.
 - Workspace synchronization is process-local. The persisted lock registry is not yet protected by a cross-process OS lock, so two independent server processes must not share a workspace concurrently.
+
+
+## Sandboxed project execution and MCP policy
+
+Container mode is the default and fails closed if Docker/Podman or a pre-pulled runtime image is unavailable. Multi-file Python/Node project bundles are bounded and mounted read-only with networking disabled, no Linux capabilities, a non-root UID, a read-only container root, and CPU/memory/PID limits. This is defense-in-depth; run the optional real-container integration tests on the target host before trusting the deployment. `mode="host"` is for local development/tests only.
+
+Outbound MCP integrations must route tool calls through `AuthorizedMCPClient` with fully qualified `server:tool` allowlist entries. Do not expose the raw MCP client to model-generated code. A trusted user-interface approval flow must control any approval grant; do not let an LLM set approval flags itself.

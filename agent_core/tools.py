@@ -619,7 +619,18 @@ class ShellExecuteTool(BaseTool):
         actual_timeout = timeout_s if timeout_s is not None else (timeout if timeout is not None else 10.0)
         actual_timeout = min(actual_timeout, self.MAX_TIMEOUT)
 
-        # Security block
+        # Host shell access is a privileged capability. Deny it unless an operator explicitly
+        # opts into unsafe local development mode; a substring blocklist is not a sandbox.
+        if os.environ.get("AGENTUFO_ALLOW_HOST_SHELL") != "1":
+            return ToolResult(
+                tool_name=self.name,
+                success=False,
+                output="",
+                error="Host shell execution is disabled. Configure an isolated container-backed tool or explicitly opt in with AGENTUFO_ALLOW_HOST_SHELL=1 for local development only.",
+                elapsed_ms=(time.perf_counter() - t0) * 1000,
+            )
+
+        # Defense-in-depth blocklist for the explicitly opted-in development path.
         blocklist = ["rm -rf /", "format c:", "del /f /s /q c:"]
         if any(b in command.lower() for b in blocklist):
             return ToolResult(

@@ -45,7 +45,8 @@ class ProviderFallbackTests(unittest.TestCase):
             (root / "tests").mkdir()
             (root / "module.py").write_text("def value(): return 1\n", encoding="utf-8")
             (root / "tests" / "test_module.py").write_text("from module import value\ndef test_value(): assert value() == 2\n", encoding="utf-8")
-            gate = ReviewGate(timeout_seconds=1.0)
+            from agent_core.sandbox import CodeExecutionSandbox
+            gate = ReviewGate(sandbox=CodeExecutionSandbox(timeout_seconds=1.0, mode="host"))
             passed, output = gate.run_project_tests(root, "module.py", candidate_content="def value(): return 2\n")
             self.assertTrue(passed, output)
             failed, output = gate.run_project_tests(root, "module.py", candidate_content="def value(): return 1\n")

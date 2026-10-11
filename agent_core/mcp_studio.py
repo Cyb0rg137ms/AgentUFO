@@ -213,8 +213,9 @@ class MCPSandboxTester:
     to test custom user-written MCP handlers safely with isolated stdout/stderr.
     """
 
-    def __init__(self, sandbox: Optional[CodeExecutionSandbox] = None) -> None:
-        self.sandbox = sandbox or CodeExecutionSandbox(timeout_seconds=5.0)
+    def __init__(self, sandbox: Optional[CodeExecutionSandbox] = None, *, allow_unsafe_host: bool = False) -> None:
+        # Host execution is available only through an explicit development opt-in.
+        self.sandbox = sandbox or CodeExecutionSandbox(timeout_seconds=5.0, mode="host" if allow_unsafe_host else "container")
 
     def test_tool_execution(
         self,

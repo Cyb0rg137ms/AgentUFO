@@ -16,6 +16,7 @@ import math
 import os
 import re
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Generic, TypeVar
@@ -23,6 +24,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Generic, T
 from agent_core.llm.base import BaseLLMProvider, LLMResponse
 from agent_core.llm.registry import LLMRegistry
 from agent_core.sandbox import CodeExecutionSandbox
+from agent_core.execution_trace import ExecutionTrace
 from agent_core.tools import ToolRegistry, ToolResult
 from agent_core.memory import ConversationBuffer, EpisodicStore, MultiLayerContinuousMemory
 from agent_core.logos import (
@@ -443,7 +445,11 @@ class SandboxOperatorInterface:
         self.auditor = RigorousAuditor(self.llm)
         self.multi_layer_mem = MultiLayerContinuousMemory()
         self.qdit_accelerator = QditSearchAccelerator(d_physical=10, max_bond_dim=16)
-        self.dag_executor = AntichainParallelExecutor(max_workers=min(8, max(2, os.cpu_count() or 4)))
+        trace_dir = Path(os.environ.get("AGENTUFO_TRACE_DIR", str(Path.cwd() / ".agentufo" / "traces")))
+        self.execution_trace = ExecutionTrace(trace_dir / "dag-events.jsonl")
+        self.dag_executor = AntichainParallelExecutor(
+            max_workers=min(8, max(2, os.cpu_count() or 4)), trace=self.execution_trace
+        )
 
     def _safe_llm_max_tokens(self, default_cap: int = 8192) -> int:
         """
@@ -805,8 +811,10 @@ class SandboxOperatorInterface:
                     current_confidence=0.86,
                     task_context=task_description,
                 )
-            except Exception:
-                leaf_code = f"# Component implementation for {leaf.id}\npass"
+            except Exception as exc:
+                self.execution_trace.emit("leaf_generation.failed", task_id=leaf.id,
+                                          fields={"error": f"{type(exc).__name__}: {exc}"})
+                raise RuntimeError(f"Leaf generation failed for {leaf.id}") from exc
 
             leaf.code_snippet = leaf_code
             leaf.confidence = leaf_conf
@@ -823,7 +831,15 @@ class SandboxOperatorInterface:
 
         max_workers = min(8, max(2, os.cpu_count() or 4))
         leaf_results: Dict[str, str] = {}
-        if task_dag and len(task_dag.nodes) > 0:
+        # The decomposition DAG contains both parent planning nodes and leaf code tasks.
+        # Execute only leaf tasks here; parent dependencies have already been resolved by
+        # decomposition. Preserve dependencies between leaves when the decomposer supplies any.
+        leaf_ids = {leaf.id for leaf in layer2_leaf_subquestions}
+        execution_dag = DependencyDAG()
+        for leaf in layer2_leaf_subquestions:
+            leaf_deps = [dep for dep in leaf.dependencies if dep in leaf_ids]
+            execution_dag.add_task(leaf.id, f"Leaf {leaf.id}: {leaf.question[:60]}", leaf, leaf_deps)
+        if len(execution_dag.nodes) > 0:
             def _dag_worker(node: DAGTaskNode) -> str:
                 leaf_sq = node.payload
                 _, code_out, _ = _execute_leaf_task(leaf_sq, 0)
@@ -831,9 +847,9 @@ class SandboxOperatorInterface:
 
             def _dag_progress(node: DAGTaskNode, done: int, total: int):
                 pct = 55 + int((done / max(1, total)) * 15)
-                emit("implementation", "in_progress", f"Antichain parallel execution: completed {done}/{total} tasks ({node.id})", pct)
+                emit("implementation", "in_progress", f"Parallel DAG execution: completed {done}/{total} tasks ({node.id})", pct)
 
-            dag_results = self.dag_executor.execute_dag(task_dag, _dag_worker, progress_callback=_dag_progress)
+            dag_results = self.dag_executor.execute_dag(execution_dag, _dag_worker, progress_callback=_dag_progress)
             for nid, c in dag_results.items():
                 if c:
                     leaf_results[nid] = c

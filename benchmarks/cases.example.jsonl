@@ -1,0 +1,2 @@
+{"case_id":"arithmetic-001","prompt":"Return only the result of 19 + 23.","expected":"42","tags":["arithmetic","exact-match"]}
+{"case_id":"string-001","prompt":"Return only the reverse of the string 'agentufo'.","expected":"ofutnega","tags":["string","exact-match"]}

@@ -22,18 +22,136 @@ import sys
 import shutil
 import tempfile
 import subprocess
+import threading
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
 class CodeExecutionSandbox:
     """
-    Manages the creation, execution, and validation of code across multiple runtimes
-    in sandboxed temporary directories with resource timeouts and security guards.
+    Provides legacy host-subprocess validation plus an explicit container-isolated API.
+
+    The default mode is container isolation. ``mode="host"`` or
+    ``AGENTUFO_SANDBOX_MODE=host`` is an explicit development-only opt-in and is NOT
+    a security boundary. Container mode fails closed when Docker/Podman or the image
+    is absent; secure multi-file project execution is not implemented yet.
     """
 
-    def __init__(self, timeout_seconds: float = 5.0) -> None:
+    def __init__(self, timeout_seconds: float = 5.0, mode: Optional[str] = None) -> None:
         self.timeout = timeout_seconds
+        self.mode = (mode or os.environ.get("AGENTUFO_SANDBOX_MODE", "container")).strip().lower()
+        if self.mode not in {"container", "host"}:
+            raise ValueError("AGENTUFO_SANDBOX_MODE must be 'container' or 'host'")
+
+    def execute_untrusted_container(
+        self,
+        code_content: str,
+        filename: str = "main.py",
+        *,
+        runtime: str = "python",
+        image: Optional[str] = None,
+        memory_limit: str = "256m",
+        cpu_limit: str = "1.0",
+        pids_limit: int = 64,
+        output_limit_bytes: int = 64_000,
+    ) -> Tuple[bool, str]:
+        """Execute untrusted code inside a locked-down Docker/Podman container.
+
+        No in-process or host-process fallback is allowed. The container has no network,
+        a read-only root filesystem, no Linux capabilities, no-new-privileges, bounded
+        memory/CPU/PIDs, and only a read-only mount containing the submitted source.
+        A container runtime and a pre-pulled image are prerequisites. This is defense in
+        depth, not a substitute for patching the host/container runtime.
+        """
+        import re
+        if runtime not in {"python", "node"}:
+            return False, "Secure container mode currently supports only python and node runtimes."
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", Path(filename).name):
+            return False, "Invalid source filename."
+        if not re.fullmatch(r"[0-9]+(?:[kmg])", memory_limit.lower()):
+            return False, "Invalid memory limit."
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(cpu_limit)):
+            return False, "Invalid CPU limit."
+        if not 1 <= pids_limit <= 512 or not 1024 <= output_limit_bytes <= 1_000_000:
+            return False, "Resource limit outside permitted bounds."
+        engine = shutil.which("docker") or shutil.which("podman")
+        if not engine:
+            return False, "Secure execution unavailable: install Docker or Podman; unsafe host fallback is disabled."
+        selected_image = image or ("python:3.12-alpine" if runtime == "python" else "node:22-alpine")
+        if not re.fullmatch(r"[A-Za-z0-9./:_-]{1,200}", selected_image):
+            return False, "Invalid container image reference."
+        with tempfile.TemporaryDirectory(prefix="agentufo-secure-") as tmpdir:
+            source_dir = Path(tmpdir).resolve()
+            source_path = source_dir / Path(filename).name
+            try:
+                source_path.write_text(code_content, encoding="utf-8")
+                if os.name != "nt":
+                    # The container runs as an unprivileged UID; make only the staged
+                    # source directory traversable and source file readable.
+                    os.chmod(source_dir, 0o755)
+                    os.chmod(source_path, 0o644)
+                if os.name == "nt":
+                    # Docker Desktop accepts absolute Windows bind paths; convert slashes.
+                    mount_path = str(source_dir).replace("\\", "/")
+                else:
+                    mount_path = str(source_dir)
+                in_container = f"/input/{source_path.name}"
+                command = [engine, "run", "--rm", "--pull=never", "--network=none",
+                           "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
+                           "--pids-limit", str(pids_limit), "--memory", memory_limit,
+                           "--cpus", str(cpu_limit), "--user", "65534:65534",
+                           "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
+                           "--mount", f"type=bind,src={mount_path},dst=/input,readonly",
+                           "--workdir", "/tmp", selected_image]
+                command.extend(["python", "-I", in_container] if runtime == "python" else ["node", in_container])
+                container_name = "agentufo-" + uuid.uuid4().hex[:16]
+                command[2:2] = ["--name", container_name]
+                captured = {"stdout": bytearray(), "stderr": bytearray()}
+                truncated = {"stdout": False, "stderr": False}
+                def drain(stream, key):
+                    # Always drain pipes to prevent child deadlock, but retain bounded logs.
+                    cap = max(512, output_limit_bytes // 2)
+                    while True:
+                        chunk = stream.read(4096)
+                        if not chunk: break
+                        room = cap - len(captured[key])
+                        if room > 0: captured[key].extend(chunk[:room])
+                        if len(chunk) > room: truncated[key] = True
+                process = None
+                try:
+                    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                               env=os.environ.copy())
+                    readers = [threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+                               threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True)]
+                    for reader in readers: reader.start()
+                    try:
+                        return_code = process.wait(timeout=self.timeout)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
+                        raise
+                    for reader in readers: reader.join(timeout=2)
+                    stdout = bytes(captured["stdout"]); stderr = bytes(captured["stderr"])
+                    combined = stdout + (b"\n" if stdout and stderr else b"") + stderr
+                    output = combined.decode("utf-8", errors="replace")
+                    if return_code == 125 and (b"No such image" in combined or b"pull access" in combined):
+                        return False, f"Secure execution image {selected_image!r} is not available locally; pre-pull it explicitly."
+                    was_truncated = any(truncated.values())
+                    return return_code == 0, output + ("\n[output truncated]" if was_truncated else "")
+                except subprocess.TimeoutExpired:
+                    return False, f"Secure container execution timed out after {self.timeout}s."
+                except OSError as exc:
+                    return False, f"Could not start secure container runtime: {type(exc).__name__}: {exc}"
+                finally:
+                    # A timed-out client must not leave an unobserved workload running.
+                    try:
+                        subprocess.run([engine, "rm", "-f", container_name], stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, timeout=3, check=False, env=os.environ.copy())
+                    except Exception:
+                        pass
+            except OSError as exc:
+                return False, f"Could not stage source for secure execution: {type(exc).__name__}: {exc}"
 
     def detect_runtime(self, filename: str, code_content: str) -> str:
         """Infers the runtime from filename extension or code markers."""
@@ -76,7 +194,7 @@ class CodeExecutionSandbox:
         runtime: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
-        Executes a script in a temporary isolated sandbox.
+        Execute a script according to the configured mode (container by default; host only by opt-in).
 
         Args:
             code_content: Code to execute.
@@ -136,6 +254,16 @@ class CodeExecutionSandbox:
         if any(bad in code_lower for bad in blocklist):
             return False, "Security Violation: Blocked malicious system operations."
 
+        if self.mode == "container":
+            secure_runtime = target_runtime
+            if secure_runtime in ("javascript", "node"):
+                secure_runtime = "node"
+            if secure_runtime not in {"python", "node"}:
+                return False, (f"Secure mode does not support runtime {secure_runtime!r} yet. "
+                               "Use Python/Node in container mode; host execution requires explicit mode='host'.")
+            return self.execute_untrusted_container(code_content, filename=filename, runtime=secure_runtime)
+
+        # Explicit development-only host execution. This is not a security boundary.
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = Path(tmpdir) / filename
             try:
@@ -237,6 +365,34 @@ class CodeExecutionSandbox:
             entrypoint: Path to the entrypoint file to run.
             runtime: Optional runtime override.
         """
+        # Validate the bundle before either container or explicit development-host
+        # execution. The host opt-in is not a security boundary, but it must not allow
+        # archive/path traversal to write outside its temporary project directory.
+        if not isinstance(files, dict) or not files:
+            return False, "Project must contain at least one file."
+        if len(files) > 250:
+            return False, "Project contains too many files (limit 250)."
+        normalized_files: Dict[str, str] = {}
+        total_size = 0
+        for raw_name, content in files.items():
+            if not isinstance(raw_name, str) or not isinstance(content, str):
+                return False, "Project file paths and contents must be strings."
+            name = raw_name.replace("\\", "/")
+            rel = Path(name)
+            if (not name or name.startswith("/") or ".." in rel.parts or
+                    any(part in {"", "."} for part in name.split("/")) or
+                    re.match(r"^[A-Za-z]:", name) or "\x00" in name):
+                return False, f"Unsafe project path rejected: {raw_name!r}."
+            total_size += len(content.encode("utf-8"))
+            if total_size > 5_000_000:
+                return False, "Project exceeds total size limit (5000000 bytes)."
+            normalized_files[name] = content
+        entrypoint = entrypoint.replace("\\", "/") if isinstance(entrypoint, str) else ""
+        if entrypoint not in normalized_files:
+            return False, f"Project entrypoint {entrypoint!r} not found in project files."
+        files = normalized_files
+        if self.mode == "container":
+            return self._execute_project_container(files, entrypoint, runtime)
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
             for rel_path, content in files.items():
@@ -285,6 +441,148 @@ class CodeExecutionSandbox:
                 return False, f"Project execution timed out after {self.timeout}s."
             except Exception as e:
                 return False, f"Project execution error: {e}"
+
+    def _execute_project_container(
+        self,
+        files: Dict[str, str],
+        entrypoint: str,
+        runtime: Optional[str] = None,
+        *,
+        memory_limit: str = "512m",
+        cpu_limit: str = "1.0",
+        pids_limit: int = 96,
+        output_limit_bytes: int = 96_000,
+        max_files: int = 250,
+        max_total_bytes: int = 5_000_000,
+    ) -> Tuple[bool, str]:
+        """Run a bounded multi-file Python/Node project in a read-only container.
+
+        The submitted project is staged into a fresh temporary directory and mounted
+        read-only. No dependency installation or network access occurs. A missing
+        runtime/image always fails closed; this method never falls back to host code.
+        """
+        if not isinstance(files, dict) or not files:
+            return False, "Project must contain at least one file."
+        if len(files) > max_files:
+            return False, f"Project contains too many files (limit {max_files})."
+        normalized: Dict[str, str] = {}
+        total_bytes = 0
+        for raw_name, content in files.items():
+            if not isinstance(raw_name, str) or not isinstance(content, str):
+                return False, "Project file paths and contents must be strings."
+            name = raw_name.replace("\\", "/")
+            rel = Path(name)
+            if (not name or name.startswith("/") or ".." in rel.parts or
+                    any(part in {"", "."} for part in name.split("/")) or
+                    re.match(r"^[A-Za-z]:", name) or "\x00" in name):
+                return False, f"Unsafe project path rejected: {raw_name!r}."
+            if len(content.encode("utf-8")) > max_total_bytes:
+                return False, "A project file exceeds the maximum project size."
+            total_bytes += len(content.encode("utf-8"))
+            if total_bytes > max_total_bytes:
+                return False, f"Project exceeds total size limit ({max_total_bytes} bytes)."
+            normalized[name] = content
+        entrypoint = entrypoint.replace("\\", "/")
+        if entrypoint not in normalized:
+            return False, f"Project entrypoint {entrypoint!r} not found in project files."
+        target_runtime = runtime or self.detect_runtime(entrypoint, normalized[entrypoint])
+        if target_runtime in {"javascript", "node"}:
+            target_runtime = "node"
+        if target_runtime not in {"python", "node"}:
+            return False, f"Secure multi-file mode supports Python and Node.js only, not {target_runtime!r}."
+        if not re.fullmatch(r"[0-9]+(?:[kmg])", memory_limit.lower()):
+            return False, "Invalid memory limit."
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(cpu_limit)):
+            return False, "Invalid CPU limit."
+        if not 1 <= pids_limit <= 512 or not 1024 <= output_limit_bytes <= 1_000_000:
+            return False, "Resource limit outside permitted bounds."
+        engine = shutil.which("docker") or shutil.which("podman")
+        if not engine:
+            return False, "Secure project execution unavailable: install Docker or Podman; unsafe host fallback is disabled."
+        selected_image = "python:3.12-alpine" if target_runtime == "python" else "node:22-alpine"
+        with tempfile.TemporaryDirectory(prefix="agentufo-project-") as tmpdir:
+            base = Path(tmpdir).resolve()
+            try:
+                for rel_name, content in normalized.items():
+                    target = base.joinpath(*Path(rel_name).parts)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    # The input map contains only regular strings; all path components
+                    # were normalized and traversal was rejected above.
+                    target.write_text(content, encoding="utf-8")
+                    if os.name != "nt":
+                        os.chmod(target, 0o444)
+                if os.name != "nt":
+                    for directory in sorted((p for p in base.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+                        os.chmod(directory, 0o555)
+                    os.chmod(base, 0o555)
+                mount_path = str(base).replace("\\", "/") if os.name == "nt" else str(base)
+                command = [engine, "run", "--rm", "--pull=never", "--network=none", "--read-only",
+                    "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "--pids-limit", str(pids_limit),
+                    "--memory", memory_limit, "--cpus", str(cpu_limit), "--user", "65534:65534",
+                    "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m", "--mount",
+                    f"type=bind,src={mount_path},dst=/workspace,readonly", "--workdir", "/workspace",
+                    "--env", "PYTHONDONTWRITEBYTECODE=1", selected_image]
+                entry_in_container = "/workspace/" + entrypoint
+                command.extend(["python", "-B", entry_in_container] if target_runtime == "python" else ["node", entry_in_container])
+                container_name = "agentufo-project-" + uuid.uuid4().hex[:16]
+                command[2:2] = ["--name", container_name]
+                captured = {"stdout": bytearray(), "stderr": bytearray()}
+                truncated = {"stdout": False, "stderr": False}
+                cap = max(512, output_limit_bytes // 2)
+                def drain(stream, key):
+                    while True:
+                        chunk = stream.read(4096)
+                        if not chunk:
+                            break
+                        room = cap - len(captured[key])
+                        if room > 0:
+                            captured[key].extend(chunk[:room])
+                        if len(chunk) > max(0, room):
+                            truncated[key] = True
+                process = None
+                try:
+                    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                               env=os.environ.copy())
+                    readers = [threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+                               threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True)]
+                    for reader in readers: reader.start()
+                    try:
+                        return_code = process.wait(timeout=self.timeout)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
+                        raise
+                    for reader in readers: reader.join(timeout=2)
+                    stdout, stderr = bytes(captured["stdout"]), bytes(captured["stderr"])
+                    combined = stdout + (b"\n" if stdout and stderr else b"") + stderr
+                    output = combined.decode("utf-8", errors="replace")
+                    if return_code == 125 and (b"No such image" in combined or b"pull access" in combined):
+                        return False, f"Secure execution image {selected_image!r} is not available locally; pre-pull it explicitly."
+                    if any(truncated.values()):
+                        output += "\n[output truncated]"
+                    return return_code == 0, output
+                except subprocess.TimeoutExpired:
+                    return False, f"Secure project execution timed out after {self.timeout}s."
+                except OSError as exc:
+                    return False, f"Could not start secure container runtime: {type(exc).__name__}: {exc}"
+                finally:
+                    try:
+                        subprocess.run([engine, "rm", "-f", container_name], stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, timeout=3, check=False,
+                            env=os.environ.copy())
+                    except Exception:
+                        pass
+            except OSError as exc:
+                return False, f"Could not stage project for secure execution: {type(exc).__name__}: {exc}"
+            finally:
+                # Restore staging permissions so TemporaryDirectory cleanup works on POSIX.
+                if os.name != "nt":
+                    try:
+                        for directory in sorted((p for p in base.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+                            os.chmod(directory, 0o755)
+                        os.chmod(base, 0o755)
+                    except OSError:
+                        pass
 
     def validate_html(self, html_content: str) -> Tuple[bool, str]:
         """Validates HTML structure, canvas elements, and embedded script tags."""

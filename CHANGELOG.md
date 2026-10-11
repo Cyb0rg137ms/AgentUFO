@@ -1,3 +1,17 @@
+## Parallel execution, security, observability, and evaluation pass (2026-10-11)
+
+- Reworked the dependency DAG executor to validate missing dependencies/cycles before work starts, schedule ready nodes concurrently, unblock descendants as dependencies finish, and block descendants after failures.
+- Wired deep LOGOS leaf implementation through a leaf-only DAG so parent planning nodes are not incorrectly executed as code-generation tasks. Added task-level trace events and removed the silent `pass`-code fallback when leaf generation fails.
+- Added append-only JSONL execution traces with timestamp/run/task metadata and conservative credential redaction.
+- Made container mode the default for single-file Python/Node execution. Added Docker/Podman controls for no network, read-only root/source mount, dropped capabilities, no-new-privileges, PID/memory/CPU bounds, bounded retained output, timeout cleanup, and fail-closed behavior when runtime/images are missing.
+- Added restricted multi-file Python/Node project execution: bounded source bundles, path traversal rejection, read-only project mount, no network, non-root UID, dropped capabilities, no-new-privileges, resource limits, bounded output, timeout cleanup, and no host fallback.
+- Added concurrency-safe budget reservations and wired the standard crew to run Builder implementation concurrently with an independent Reviewer architecture/security audit; executable verification and merge remain ordered and the LLM audit remains advisory.
+- Added `AuthorizedMCPClient` for outbound MCP calls using fully qualified allowlist entries, plus tests proving unauthorized calls never reach the transport. Deployments must wire external client calls through the adapter and bind approval to trusted UI consent.
+- Added a live-provider routing benchmark CLI for frozen JSONL cases and verified operator-supplied prices. Missing provider usage is labelled estimated; incomplete/failed routes do not produce misleading cost-savings percentages.
+- Added opt-in real-container integration tests and a dedicated Ubuntu CI job that pulls the Python image and tests non-root execution, read-only filesystems, network isolation, and multi-file imports.
+- Added regression and end-to-end tests covering actual parallel overlap, DAG validation/failure propagation, permission enforcement, redaction, secure multi-file command construction, and reproducible evaluation reports.
+- Added `docs/PRODUCTION_CAPABILITIES.md` to distinguish implemented controls from remaining live-provider, deployment-host, MCP integration, and adversarial-test gaps.
+
 # Changelog
 
 ## Production hardening pass (2026-10-10)

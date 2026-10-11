@@ -1,593 +1,127 @@
-# AgentUFO 🚀
-### An AI-powered development environment for orchestrating models, tools, and software engineering workflows.
+# AgentUFO Studio — hardening & product upgrade
 
-**One workspace. Multiple models. A structured path from idea to implementation.**
+AgentUFO is a local-first developer studio for model-assisted coding, multi-agent workflows, workspace
+browsing, and review-gated code changes. This build organizes the supplied source into a runnable package
+and adds an initial hardening and UX pass. It is a work-in-progress engineering baseline, not a claim of
+enterprise certification or benchmark superiority.
 
-AgentUFO is an AI-powered development environment designed to bring conversational AI, multi-model routing, agent-based software development, and engineering verification into a unified workspace.
+## Quick start
 
-Instead of treating AI as a chatbot that only generates code snippets, AgentUFO explores a more structured approach: describe a task in natural language, route work through specialized roles, interact with project files, track execution, and review changes before accepting them.
+Python 3.10+ is required. The local UI and HTTP API use the Python standard library; NumPy is optional for the experimental Qdit tensor module.
 
-The objective is simple: **make AI-assisted software development more capable, observable, and cost-conscious without losing control over the engineering process.**
-
-<!-- Replace these paths with real screenshots and GIFs from the application. -->
-<p align="center">
-  <img src="docs/assets/agentufo-hero.png" alt="AgentUFO AI development environment" width="100%">
-</p>
-
-<p align="center">
-  <a href="#-overview">Overview</a> •
-  <a href="#-key-features">Features</a> •
-  <a href="#-how-it-works">Workflow</a> •
-  <a href="#-architecture">Architecture</a> •
-  <a href="#-getting-started">Getting Started</a> •
-  <a href="#-roadmap">Roadmap</a>
-</p>
-
----
-
-## 🎬 See AgentUFO in Action
-
-The interface is designed around a familiar chat-first experience. The main workspace stays focused on the task, while dedicated tools provide visibility into routing, agent activity, budgets, and integrations.
-
-| Main workspace | Agent orchestration |
-|---|---|
-| ![AgentUFO chat interface](docs/assets/chat-workspace.png) | ![AgentUFO crew tracking](docs/assets/crew-tracking.png) |
-| Describe a task, select a model, and interact with the development workflow. | Inspect task progress, agent roles, and execution state. |
-
-### A closer look
-
-**Multi-model routing and token efficiency**
-
-![Model routing demo](docs/assets/model-routing.gif)
-
-**Live crew tracking and execution controls**
-
-![Crew tracking demo](docs/assets/crew-tracking.gif)
-
-**MCP Studio and tool integration workflows**
-
-![MCP Studio demo](docs/assets/mcp-studio.gif)
-
-> These image paths are intended as repository assets. Add real screenshots or recorded GIFs at the corresponding paths before publishing the README; the placeholders are not live product captures.
-
----
-
-## 🧭 Overview
-
-Modern AI coding workflows often involve a collection of disconnected tools: one interface for chatting, another for editing files, separate model APIs, custom scripts for automation, and limited visibility into what an agent is doing.
-
-AgentUFO brings these concerns together into a single development environment.
-
-Its design combines:
-
-- **Conversational development:** express requirements naturally instead of manually coordinating every low-level operation.
-- **Multi-model workflows:** select models and route different responsibilities to appropriate providers.
-- **Agent-based task decomposition:** organize development work around roles such as Architect, Builder, and Reviewer.
-- **Local and cloud inference:** support workflows involving local models through Ollama and cloud model APIs.
-- **Execution visibility:** inspect agent activity, task state, and operational controls.
-- **Tool integration:** develop and test Model Context Protocol (MCP) integrations.
-- **Engineering verification:** incorporate testing and review gates into the development workflow.
-- **Resource awareness:** track token usage and budgets, and reduce unnecessary model calls and retained context.
-
-The project is built around a broader idea: useful AI engineering systems need more than capable models. They also need orchestration, state management, observability, reliable tool execution, and mechanisms for checking the work those models produce.
-
-## ✨ Key Features
-
-### 💬 1. Chat-first development workspace
-
-The main interface is designed to feel familiar to anyone who has used a conversational AI assistant.
-
-Users can describe what they want to build, discuss implementation choices, and initiate structured development tasks without navigating through a collection of disconnected dashboards.
-
-The chat workspace is intended to remain the primary experience. Supporting capabilities live in dedicated utility windows rather than competing with the conversation for screen space.
-
-**Design principles**
-- Keep the user's task and conversation at the center.
-- Make model selection explicit.
-- Support natural-language task descriptions.
-- Separate everyday interaction from operational controls.
-- Keep project files accessible without turning file navigation into the main experience.
-
-### 🧠 2. Multi-model routing and token efficiency
-
-Different models have different capabilities, latency profiles, context limits, and costs. Using the same expensive model for every operation is not always the best engineering decision.
-
-AgentUFO is designed to support model selection and routing strategies that match model usage to the task.
-
-Potential routing decisions include:
-
-- Using a stronger model for architectural reasoning or complex planning.
-- Delegating suitable implementation subtasks to less expensive models.
-- Using local models for compatible operations when their capabilities are sufficient.
-- Limiting unnecessary context and repeated requests.
-- Applying token and budget awareness when coordinating work.
-
-The goal is not simply to minimize tokens. It is to improve the relationship between **output quality, execution time, and inference cost**.
-
-Actual savings depend on the selected models, task complexity, routing policy, and provider pricing; they should be measured rather than assumed.
-
-### 👥 3. Structured agent workflows
-
-AgentUFO organizes development work around specialized responsibilities rather than treating every operation as an undifferentiated conversation.
-
-A representative workflow uses three roles:
-
-| Role | Responsibility |
-|---|---|
-| **Architect** | Understand requirements, plan the implementation, and identify relevant components. |
-| **Builder** | Implement the proposed changes and work with the relevant project files. |
-| **Reviewer** | Inspect the result, identify problems, and evaluate whether the requirements have been satisfied. |
-
-The roles provide a useful separation of concerns:
-
-- Planning determines what should change.
-- Implementation determines how to make the change.
-- Review evaluates the resulting work.
-
-This separation also creates opportunities to use different models for different responsibilities.
-
-**Important distinction:** specialized roles do not automatically imply simultaneous execution. The current orchestration approach includes sequential execution; genuine parallel agent execution remains a development goal.
-
-### 📡 4. Live Crew Tracking
-
-Agent workflows are easier to understand when their execution state is visible.
-
-The Crew Tracking interface is intended to expose the state of agent-driven tasks and provide controls for observing and managing execution.
-
-It complements the chat workspace by answering operational questions:
-
-- Which role is currently active?
-- What stage of the workflow is running?
-- What work has been completed?
-- Where is the process waiting or failing?
-- What controls are available for the current task?
-
-The emphasis is on making orchestration inspectable rather than hiding it behind a single loading indicator.
-
-### 🎛️ 5. Control Room
-
-The Control Room provides a dedicated place for operational visibility and control.
-
-Rather than mixing every system setting into the main conversation, AgentUFO separates execution management from everyday interaction.
-
-This creates a foundation for monitoring model usage, execution state, task controls, and resource constraints as the environment evolves.
-
-### 🔌 6. MCP Studio
-
-The Model Context Protocol (MCP) provides a standard way for AI applications to interact with external tools and contextual resources.
-
-AgentUFO's MCP Studio focuses on making tool integration easier to inspect and work with.
-
-Its intended workflow includes:
-
-1. Define or configure an MCP integration.
-2. Inspect the integration's configuration.
-3. Generate or prepare the relevant server implementation.
-4. Test the integration.
-5. Connect compatible tools to a broader AI workflow.
-
-MCP support is treated as an integration boundary, not a reason to trust arbitrary tools automatically. Production-grade deployments still require explicit permission handling, credential protection, input validation, and isolation for untrusted code.
-
-MCP generation and testing should not be confused with automatic, unrestricted launching of arbitrary servers.
-
-### 📁 7. Project and filesystem interaction
-
-Software development agents need to work with real project artifacts, not only produce plausible-looking answers.
-
-AgentUFO's development workflow includes filesystem-oriented operations so that tasks can interact with project files.
-
-The interface keeps file access secondary to the conversation, with a compact file viewer or dropdown rather than a separate, permanently dominant workspace.
-
-This design aims to preserve a clean interaction model while allowing users to inspect relevant artifacts when needed.
-
-### 🧪 8. Testing and review gates
-
-A generated code change is not necessarily a correct code change.
-
-AgentUFO incorporates testing and review into the workflow so that implementation quality is evaluated separately from the model's confidence in its own output.
-
-A robust verification cycle should:
-
-- Identify the intended changes.
-- Execute the available checks.
-- Inspect failures rather than silently treating them as success.
-- Review the implementation against the requirements.
-- Surface unresolved issues before accepting the result.
-
-The long-term goal is to make successful verification an explicit condition for accepting changes, with trustworthy execution results rather than model-generated claims of success.
-
-Verification coverage depends on the configured tests and the checks actually executed. Passing tests are useful evidence, not a universal proof of correctness.
-
----
-
-## 🔄 How It Works
-
-AgentUFO follows a structured development workflow that moves from a natural-language request toward an implementation that can be inspected and tested.
-
-### End-to-end workflow
-
-```mermaid
-flowchart TD
-    A["User describes a task"] --> B["Understand requirements"]
-    B --> C["Select model and workflow"]
-    C --> D["Architect: plan the changes"]
-    D --> E["Builder: implement the task"]
-    E --> F["Run available tests and checks"]
-    F --> G{"Review result"}
-    G -->|Issues found| H["Analyze failures and revise"]
-    H --> E
-    G -->|Checks pass| I["Present changes and results"]
-    I --> J["User inspects and accepts"]
-```
-
-This diagram describes the intended workflow, not a guarantee that every task automatically completes every stage. The available execution and verification steps depend on the configured environment.
-
-### Step 1 — Describe the task
-
-The user provides a request such as:
-
-> Build a REST API for task management with authentication, persistent storage, input validation, and tests.
-
-The system starts from the requirements rather than immediately generating arbitrary code.
-
-### Step 2 — Plan the work
-
-The Architect role identifies the major components, dependencies, implementation steps, and relevant constraints.
-
-For a multi-file change, this planning stage helps establish what needs to be modified before implementation begins.
-
-### Step 3 — Route and execute
-
-The selected workflow assigns work to the appropriate role and model configuration.
-
-The Builder performs the implementation using the available tools and project context. Model routing can be used to balance capability, latency, and cost.
-
-### Step 4 — Verify the result
-
-Available tests and checks evaluate the implementation. Failures should feed back into the development process rather than being hidden behind a successful-looking response.
-
-### Step 5 — Review and present
-
-The result is surfaced for inspection, including relevant changes and verification outcomes.
-
-The goal is a workflow where users can understand not only what the system produced, but also what it actually checked.
-
----
-
-## 🏗️ Architecture
-
-AgentUFO can be understood as a set of cooperating layers.
-
-```mermaid
-flowchart TB
-    U["User"]
-    UI["Chat-first UI"]
-    UT["Utility Windows"]
-    OR["Task Orchestration"]
-    ROUTER["Model Selection and Routing"]
-    AGENTS["Architect · Builder · Reviewer"]
-    MODELS["Cloud Model APIs"]
-    LOCAL["Local Models via Ollama"]
-    TOOLS["Filesystem and MCP Tools"]
-    VERIFY["Testing and Review"]
-    OBS["Usage, State and Telemetry"]
-
-    U --> UI
-    U --> UT
-    UI --> OR
-    UT --> OR
-    OR --> ROUTER
-    ROUTER --> AGENTS
-    AGENTS --> MODELS
-    AGENTS --> LOCAL
-    AGENTS --> TOOLS
-    AGENTS --> VERIFY
-    OR --> OBS
-    VERIFY --> OR
-    OR --> UI
-```
-
-### Architectural responsibilities
-
-| Layer | Purpose |
-|---|---|
-| User interface | Provides the primary chat experience and supporting utility windows. |
-| Task orchestration | Coordinates task state, role assignments, and workflow progression. |
-| Model routing | Selects model configurations appropriate to the task and available resources. |
-| Agent roles | Separates planning, implementation, and review responsibilities. |
-| Tool integration | Connects development workflows to filesystem operations and supported MCP tooling. |
-| Verification | Runs available tests and review checks against generated changes. |
-| Observability | Makes relevant execution state and resource usage easier to inspect. |
-
-These layers represent the logical architecture. They should not be interpreted as a claim that every component runs as an independent service or process.
-
-### Why separate these responsibilities?
-
-Combining model calls, UI state, tool execution, and verification in one undifferentiated loop makes a system difficult to debug and extend.
-
-Separating these responsibilities creates clearer boundaries:
-
-- Model choice can evolve without redesigning the entire interface.
-- Agent roles can be adjusted independently of the user experience.
-- Tool execution can be governed by explicit permissions.
-- Verification can evaluate implementation results independently of the model that generated them.
-- Usage and execution state can be inspected without relying solely on conversational output.
-
-This separation is a foundation for improving reliability as the project grows.
-
----
-
-## 💰 Why Token Efficiency Matters
-
-Multi-agent development can improve task decomposition, but it can also multiply inference costs.
-
-If a workflow uses several models, each with its own input and output tokens, the total cost can rise quickly. Repeatedly transmitting the entire conversation makes this worse.
-
-A simplified cost model is:
-
-\[
-C_{\text{total}}
-=
-\sum_{i=1}^{n}
-\left(
-\frac{I_i P_i^{\text{in}}}{10^6}
-+
-\frac{O_i P_i^{\text{out}}}{10^6}
-\right)
-\]
-
-Where:
-
-- \(I_i\) is the input-token count for model call \(i\).
-- \(O_i\) is the output-token count.
-- \(P_i^{\text{in}}\) is the provider's input price per million tokens.
-- \(P_i^{\text{out}}\) is the provider's output price per million tokens.
-- \(n\) is the number of model calls.
-
-AgentUFO explores practical ways to control this cost:
-
-1. **Model selection:** avoid using a more expensive model when a cheaper option is sufficient.
-2. **Task-specific context:** provide the information needed for the current operation instead of repeatedly transmitting irrelevant history.
-3. **Bounded history and telemetry:** control retained data to reduce unnecessary memory growth.
-4. **Call discipline:** avoid redundant model requests where the workflow can reuse existing information.
-5. **Budget visibility:** make resource consumption easier to inspect.
-
-The real objective is to optimize the cost of a *successfully completed task*, not merely the cost of one model call.
-
-Useful future measurements include cost per completed task, total model calls, input/output tokens, end-to-end latency, and verification pass rate.
-
----
-
-## 🛡️ Engineering Principles
-
-AgentUFO is being developed around several principles that matter when moving beyond AI demos.
-
-### 1. Observable execution
-
-The system should expose meaningful task state and execution outcomes so that failures can be investigated.
-
-### 2. Verification over confidence
-
-A model saying that code works is not equivalent to executing tests and examining their results.
-
-### 3. Explicit resource management
-
-Model selection, token consumption, and retained context should be treated as engineering constraints.
-
-### 4. Controlled tool access
-
-Filesystem operations and external tool integrations require clear permissions and careful handling of untrusted inputs.
-
-### 5. Separation of concerns
-
-User interaction, orchestration, model inference, tool execution, and verification should have identifiable responsibilities.
-
-### 6. Honest capability boundaries
-
-A sequential workflow should not be presented as parallel execution. A generated MCP server should not be presented as a securely sandboxed service unless those properties have actually been implemented and tested.
-
-These principles guide the project as it evolves from an AI-assisted development interface toward a more capable engineering environment.
-
----
-
-## 🧰 Technology and Integrations
-
-AgentUFO is designed to work with a combination of model providers and development tools.
-
-| Component | Role |
-|---|---|
-| Cloud LLM APIs | Access hosted models for supported development tasks. |
-| Ollama | Run compatible models locally. |
-| MCP | Provide a structured integration path for external tools. |
-| Filesystem tooling | Work with project files as part of development workflows. |
-| Test runners and checks | Evaluate implementation results where configured. |
-
-The exact providers, supported models, and runtime requirements depend on the project's current configuration.
-
-### Local versus cloud inference
-
-Local inference can offer more control over data flow and avoid per-token API charges for the inference itself. However, local models still have hardware, latency, and maintenance costs, and may be less capable for some tasks.
-
-Cloud inference provides access to hosted models without requiring the user to run those models locally, but introduces provider costs and external data-handling considerations.
-
-AgentUFO's multi-model approach is intended to let developers make these trade-offs deliberately instead of assuming one deployment strategy fits every task.
-
----
-
-## 🚀 Getting Started
-
-AgentUFO is under active development. Setup instructions should match the current repository version and supported runtime.
-
-### Prerequisites
-
-Before running the application, check the repository for its current requirements:
-
-- The supported Python and/or application runtime versions.
-- The project's dependency and environment configuration.
-- Any required model-provider API keys.
-- Ollama, if using supported local models.
-- The configuration needed for filesystem access and external tools.
-
-### Installation
-
-Clone the repository:
-
-```bash
-git clone <YOUR_AGENTUFO_REPOSITORY_URL>
-cd AgentUFO
-```
-
-Create and activate the environment according to the project's current setup instructions.
-
-For a Python virtual environment on Windows PowerShell, the standard pattern is:
+On Windows, the easiest path is to double-click `START_AGENTUFO.bat`. It creates the virtual environment if needed and launches Python directly without invoking `pip.exe` or requiring PowerShell activation policy changes.
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+# Or run from the extracted project root
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe run_web_ui.py
 ```
 
-This assumes the repository contains a compatible `requirements.txt`. If the project uses another dependency manager or has additional system requirements, follow its actual configuration instead.
+If Windows Application Control blocks the standalone `pip.exe`, do not call `pip` directly. Core startup needs no package install. For the optional Qdit experiment only, use `python -m pip install -e ".[qdit]"` if your system policy permits it.
 
-Using the environment's Python executable directly can also help avoid Windows environments where a standalone `pip.exe` launcher is blocked by application-control policies.
+Open `http://127.0.0.1:8000`. The server opens the browser by default. To keep it in the foreground without opening a tab, use `python run_web_ui.py --no-browser`. Keep the server bound to `127.0.0.1`; it has no login and is not designed for exposure to a network.
 
-### Configuration
+### Connect a model
 
-Configure the model providers and integrations required for the workflow you want to use.
+- **Local:** open **Model routing**, start Ollama, choose an installed model, and connect it. Pull progress is shown when a model must be downloaded.
+- **Cloud:** paste an API key in **Model routing**. AgentUFO detects the provider and proposes a default model; the UI clears the key field after submission. The provider may make a verification request.
+- **Multiple models:** select several model/provider pairs and apply them. The run sends those assignments to the coordinator. When **Save API tokens** is enabled, the first selected cloud model is preferred for planning, local models are eligible for implementation, and the empirical capability probe can veto weak/unavailable local models. No silent fallback is intended.
 
-**Security recommendations:**
+Never commit `.env` or API keys.
 
-- Keep API keys in environment variables or an appropriate secret manager.
-- Do not commit credentials, private configuration files, or local model artifacts.
-- Restrict filesystem access to the intended project directory where possible.
-- Treat external tool integrations as privileged capabilities.
-- Avoid executing untrusted generated code on the host without suitable isolation.
+### Secure code execution prerequisites
 
-### Launch
+Single-file generated Python/Node code uses container mode by default. Install Docker Desktop (Windows/macOS) or Docker/Podman (Linux), start the daemon, and pre-pull the runtime images because AgentUFO deliberately does not pull images automatically during execution:
 
-Use the startup command documented by the current repository version.
+```bash
+docker pull python:3.12-alpine
+docker pull node:22-alpine
+```
 
-Once the application is running, the expected workflow is to open the chat interface, select a model, describe a development task, and use the available orchestration and utility tools to inspect execution.
+If no compatible container runtime/image is available, execution fails closed rather than silently running generated code on the host. Multi-file Python/Node projects are staged into a fresh directory and run with the same restricted container profile, mounted read-only. Network dependency installation is intentionally disabled. `AGENTUFO_SANDBOX_MODE=host` and `AGENTUFO_ALLOW_HOST_SHELL=1` are unsafe development-only opt-ins; do not enable them for untrusted prompts or production workloads. Real container isolation must be validated on the deployment host; the integration test runs in the Ubuntu CI container job when Docker is available.
 
-> The launch command, complete dependency list, and verified operating-system support should be documented from the actual repository rather than inferred from the project description.
+## Control-room redesign
 
----
+- **Live crew board:** run state, per-seat status, model binding, progress, token telemetry, and event timeline. Provider token counts are marked estimated until the provider/coordinator reports usage.
+- **Per-run controls:** pause/resume, stop, shared instruction edits, per-seat stop/pause, and context injection. Synchronous provider calls already in flight may not be instantly interruptible; controls take effect at a safe checkpoint.
+- **Multi-model routing:** selected models are passed into the coordinator's actual seat bindings. Local models are capability-probed and may be vetoed. A missing/unavailable selected model fails explicitly rather than silently consuming cloud tokens.
+- **Real workspace:** bounded source context from the active project, path confinement, durable locks, staged file writes, atomic commit/rollback, file editor, and workspace-change context broadcast.
+- **Review gate:** generated candidates are tested before commit. A failed gate rejects the candidate; the current pipeline permits one repair attempt for supported Python changes.
+- **Durable runs:** run history and event timeline survive refresh and interrupted runs are labelled interrupted, not completed. The local JSON ledger is intended for one server process at a time.
+- **Ollama setup:** start the daemon, inspect installed models, connect or pull a model, and show progress/errors rather than assuming it is available.
+- **Budget controls:** total token, planner token, per-seat token, and estimated spend caps. Dollar spend is an estimate using the configured rate, not an invoice-grade price oracle.
+- **No simulated LLM provider:** if a real provider is unavailable, generation fails with an actionable error.
 
-## 🗺️ Roadmap
+## Test and quality commands
 
-AgentUFO is a work in progress. The following areas describe the direction of development rather than a claim that every capability is already complete.
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q agent_core server scripts tests run_web_ui.py
+```
 
-- [x] Chat-first interaction model
-- [x] Dedicated utility windows for routing, tracking, and tool workflows
-- [x] Architect–Builder–Reviewer role structure
-- [x] Local-model integration through Ollama as a supported workflow
-- [x] Token, history, and runtime-efficiency improvements
-- [ ] Genuine parallel execution for independent agent tasks
-- [ ] Stronger end-to-end testing across supported configurations
-- [ ] More comprehensive execution traces and failure diagnostics
-- [ ] Secure sandboxing for untrusted code execution
-- [ ] More rigorous model-routing evaluation and cost benchmarks
-- [ ] Expanded permission controls for filesystem and MCP operations
-- [ ] Reproducible evaluation of task completion and verification quality
+Optional development tools:
 
-The checked items describe capabilities previously established in the project workflow; confirm them against the current repository before publishing. The remaining items are development goals, not existing guarantees.
+```bash
+python -m pip install -e ".[dev,qdit]"
+ruff check agent_core server run_web_ui.py tests
+bandit -r agent_core server
+```
 
----
+Do not interpret passing syntax checks as proof that every workflow is correct. The production-capability tests include real thread-overlap assertions, dependency-failure propagation, path/MCP authorization, trace redaction, and deterministic report generation. A dedicated Ubuntu CI job pulls the Python runtime image and exercises actual container restrictions when that workflow runs. Live model-provider comparisons still require operator credentials and a frozen task set.
 
-## 📊 Evaluation: What Success Should Mean
+See [Production Capabilities](docs/PRODUCTION_CAPABILITIES.md) for implemented behavior, safe configuration, evaluation formats, and remaining integration gaps.
 
-AI development tools should be evaluated on outcomes rather than the number of agents, model calls, or interface features they expose.
+## Reproducible model-routing benchmark
 
-AgentUFO can be evaluated using a reproducible set of software engineering tasks and measurements such as:
+The CLI runs a frozen JSONL task set through real configured providers. Copy the example files, replace the sample routes/models and **verify current prices** before benchmarking:
 
-| Metric | What it measures |
-|---|---|
-| Task completion rate | Percentage of tasks meeting their defined acceptance criteria. |
-| Test pass rate | Percentage of required checks that pass. |
-| Regression rate | Frequency of introducing failures into previously working behavior. |
-| Cost per completed task | Total model-inference cost for an accepted result. |
-| End-to-end latency | Time from task submission to a reviewable result. |
-| Model-call count | Number of inference requests used per task. |
-| Human intervention rate | How often a task requires manual correction or recovery. |
-| Reproducibility | Whether the same evaluation can be repeated with comparable results. |
+```bash
+cp benchmarks/cases.example.jsonl benchmarks/cases.jsonl
+cp benchmarks/routes.example.json benchmarks/routes.json
+python scripts/run_routing_benchmark.py --cases benchmarks/cases.jsonl --routes benchmarks/routes.json --report .agentufo/benchmarks/report.json
+```
 
-A meaningful comparison should use the same task set, acceptance criteria, and testing environment across configurations.
+Each case requires an exact expected output for the built-in evaluator. For code-generation comparisons, use task-specific tests and acceptance criteria instead of exact string matching. If a provider omits usage, token counts are estimated from characters and explicitly marked; cost savings are withheld when calls fail or cost observations are incomplete. The example dataset is only a smoke-test fixture, not a meaningful model leaderboard.
 
-For example, a multi-model workflow should not be considered better merely because it generates more code. It should demonstrate an improvement in completion quality, cost, latency, or another explicitly measured outcome.
+## Architecture map
 
-No benchmark score or cost-saving percentage should be claimed without recorded evaluation results.
+- `agent_core/llm/`: provider contracts, Ollama, cloud APIs, provider registry.
+- `agent_core/logos/`: decomposition, topology, memory, pondering, retrieval, audit, DAG, and Qdit modules.
+- `agent_core/`: workspace manager, review gate, sandbox, tools, memory, operator, and crew orchestration.
+- `server/`: API controller, HTTP routing, and starter artifacts.
+- `web/`: frontend assets and the premium UX layer.
 
----
+## Known limitations and honest status
 
-## 🔭 Future Direction
+- The host-mode execution runner is a development/test compatibility path, **not** a secure container boundary. Default container mode is restricted, but security still depends on the host kernel, container runtime, image provenance, and deployment configuration.
+- This is a single-user local app; authentication and multi-tenant isolation are not implemented. Keep the server on loopback.
+- Crew coordination is stateful and currently supports one active mission per server process. Run records are atomic JSON, not a multi-process transactional database.
+- Pause/stop cannot terminate an already-running synchronous provider HTTP request. It stops at the next safe checkpoint; true transport-level cancellation needs streaming/cancellable provider clients.
+- The standard crew pipeline keeps Architect planning first, then runs Builder implementation concurrently with an independent Reviewer architecture/security audit. Executable tests, repair, and merge remain ordered after those calls. The deep LOGOS path also has dependency-aware parallel execution for independent leaf tasks; concurrent multi-file builders still need live-provider stress tests and same-file conflict handling.
+- **Code execution defaults to container mode** for Python/Node snippets and multi-file projects. Install Docker/Podman and pre-pull the required images. The container path uses no network, a read-only root/project mount, dropped capabilities, no-new-privileges, a non-root UID, and resource limits. Real isolation was not exercised in this development environment because Docker/Podman was unavailable; an opt-in integration test and dedicated CI job cover that boundary where a runtime is available. `AGENTUFO_SANDBOX_MODE=host` is an explicit development-only opt-in and is not safe for hostile code. Host shell access is disabled unless `AGENTUFO_ALLOW_HOST_SHELL=1` is explicitly set for local development.
+- Workspace policy rejects traversal, symlink escapes, and common secret/key paths. The MCP policy supports default-deny authorization and approval hooks; outbound clients should use `AuthorizedMCPClient` with a fully qualified `server:tool` allowlist. AgentUFO does not automatically connect arbitrary external MCP servers, so deployments must wire this adapter into any external-client integration and bind approvals to trusted user consent.
+- JSONL execution traces, redaction, a live-provider routing benchmark CLI, and a frozen task-evaluation harness are included. These are measurement infrastructure, not benchmark claims: use a representative versioned task set and verified provider prices before claiming cost savings. The real container integration test was skipped locally because no Docker/Podman runtime was available.
+- The LOGOS pondering/decomposition/convergence scores are uncalibrated heuristics, not probabilities or proofs. NAS latency/success predictions remain unbenchmarked until measured. The Qdit module is a classical tensor-network experiment; its current candidate ranking is performed by a classical scoring function, not by a quantum computer. Holographic memory retains full records/chunks and is not constant-space compression.
 
-The longer-term direction is to evolve AgentUFO into a development environment where AI systems can take on increasingly complex engineering work while remaining inspectable and controllable.
+See [SECURITY.md](SECURITY.md) before running generated code.
 
-That direction involves several connected problems:
+## Complete project bundle
 
-- **Better orchestration:** coordinate independent work without losing consistency or shared task context.
-- **Reliable execution:** make filesystem and tool operations predictable and recoverable.
-- **Stronger verification:** use actual test results and review evidence to evaluate generated changes.
-- **Efficient inference:** route work according to task difficulty, model capability, and cost.
-- **Secure integrations:** constrain the authority available to agents and external tools.
-- **Reproducible evaluation:** measure improvements against defined engineering tasks instead of relying on subjective demonstrations.
+This bundle includes `docs/ARCHITECTURE.md` (end-to-end flow), `docs/OPERATIONS.md`, a release acceptance checklist, a GitHub Actions CI workflow, local run scripts, and UI design references. The organized root modules are the canonical runtime; legacy simulated-provider code is not shipped.
 
-The challenge is not simply making models produce more output. It is building the surrounding system that helps that output become useful, testable software.
+For a clean local run, `scripts/run-local.ps1` supports Windows PowerShell and `scripts/run-local.sh` supports macOS/Linux. See `SECURITY.md` and the acceptance checklist before enabling code execution or exposing the HTTP server beyond localhost.
 
----
+## Utility windows (latest update)
 
-## 🤝 Contributing
+The existing main workspace remains in place. Top-bar utility windows provide:
 
-Contributions, bug reports, architecture discussions, and reproducible test cases are welcome.
+- **Model routing** — select up to three model assignments and set token/spend caps for the verified three-seat pipeline.
+- **Live crew** — inspect seat status and available pause/resume/stop/context controls.
+- **Control room** — system/provider health and active-run summary.
+- **MCP Studio** — generate a FastMCP server and client config, test the handler using container mode by default, and save the files to `agentufo_mcp/` in the active project. Host execution is available only as an explicit development opt-in.
 
-Useful contributions include:
+To run a generated MCP server outside AgentUFO, install the optional SDK in the environment used by the MCP host: `python -m pip install -r requirements-mcp.txt`. If Windows Application Control blocks the package installer, use the approved package-management route for that machine. Review generated tool code before connecting it to a trusted host.
 
-- Improving model-routing strategies.
-- Adding tests for orchestration and failure recovery.
-- Improving filesystem safety and tool permissions.
-- Extending supported model-provider integrations.
-- Improving MCP configuration and testing.
-- Measuring latency, cost, and task-completion quality.
-- Improving the interface and execution observability.
+### Performance notes
 
-For bug reports, include the relevant environment details, steps to reproduce the issue, expected behavior, actual behavior, and available logs with secrets removed.
-
-Before contributing, review the repository's current contribution guidelines and licensing information.
-
----
-
-## 🔐 Security
-
-AgentUFO interacts with models, project files, and potentially external tools. These capabilities require care.
-
-- Never expose API keys or private credentials in logs or screenshots.
-- Review generated code before running it in a sensitive environment.
-- Restrict filesystem permissions to the directories required for a task.
-- Do not assume model-generated commands are safe.
-- Apply appropriate authentication, authorization, and isolation to external integrations.
-- Report security vulnerabilities privately through the repository maintainer's documented reporting channel, once one is established.
-
-Security depends on the actual runtime implementation and configuration. The presence of a review workflow alone does not constitute a sandbox or security boundary.
-
----
-
-## 📄 License
-
-Add the project's chosen open-source license before publishing. Until a license is included, users should not assume that the repository grants permission to redistribute or modify its contents.
-
----
-
-## 👨‍💻 About the Project
-
-AgentUFO is an exploration of how LLM infrastructure, model routing, agent orchestration, developer tooling, and verification can fit together in a practical software engineering environment.
-
-It is being developed with a focus on the engineering challenges behind AI-assisted development: not just generating code, but coordinating work, managing resources, integrating tools, observing execution, and evaluating results.
-
-**The central idea:** AI-assisted development becomes more useful when model intelligence is paired with well-designed systems, measurable outcomes, and mechanisms for checking the work.
-
-If you're interested in AI engineering, local inference, multi-model systems, or agent-based development workflows, follow the project and join the discussion.
-
----
-
-<p align="center">
-  <strong>AgentUFO — From natural-language intent to inspectable engineering workflows.</strong>
-</p>
+Routine conversational prompts now skip the expensive LOGOS multi-pass analysis by default and use a bounded output/context budget. Include wording such as `analyze deeply` or `use LOGOS` to request the deeper path. Crew-run telemetry persistence and workspace fingerprint scanning are bounded/throttled. The standard crew now overlaps Builder implementation with an independent Reviewer architecture/security audit using concurrency-safe budget reservations; the authoritative test/review gate and merge decision remain sequential. The LOGOS path also supports validated DAG scheduling for independent leaf tasks. General parallel multi-file code generation still requires live-provider stress testing and same-file merge/conflict handling before it should be treated as a fully general parallel coding swarm.

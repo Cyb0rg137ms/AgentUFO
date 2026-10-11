@@ -18,6 +18,8 @@ import os
 import shutil
 import time
 import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -209,6 +211,14 @@ class AgentUFOCoordinator:
         self.budget_guard = budget_guard or HardBudgetGuard()
         self.review_gate = review_gate or ReviewGate()
         self.capability_prober = capability_prober or EmpiricalCapabilityProber(self.workspace.root)
+        # Shared budget counters need reservations because independent agent calls can
+        # now be in flight simultaneously. Reservations prevent concurrent calls from
+        # each spending the same remaining token headroom.
+        self._budget_lock = threading.RLock()
+        self._reserved_total_tokens = 0
+        self._reserved_planner_tokens = 0
+        self._reserved_seat_tokens: Dict[str, int] = {}
+        self._reserved_cloud_cost_usd = 0.0
 
         # Durable state directory
         self.state_file = self.workspace.agentufo_dir / "crew_state.json"
@@ -407,34 +417,71 @@ class AgentUFOCoordinator:
         return self.local_llm, "local"
 
     def _generate_with_budget(self, seat: CrewSeat, llm: BaseLLMProvider, prompt: str, *, is_planner: bool = False, is_local_tier: bool = False) -> LLMResponse:
-        """Bound each provider call by remaining token budgets and record observed usage."""
+        """Generate under a concurrency-safe token/cost reservation.
+
+        The reservation is acquired before the provider call and released after actual
+        usage is recorded. This permits independent agent calls to overlap without
+        letting each request observe and consume the same unreserved budget headroom.
+        """
         controlled = self._controlled_prompt(seat, prompt)
         estimated_prompt = max(64, len(controlled) // 4)
         guard = self.budget_guard
-        guard.check_headroom(seat.seat_id, is_planner=is_planner, estimated_tokens=estimated_prompt + 1, is_local_tier=is_local_tier)
-        remaining = guard.config.total_token_cap - guard.total_tokens_used - estimated_prompt
-        remaining = min(remaining, guard.config.per_seat_token_cap - guard.seat_tokens_used.get(seat.seat_id, 0) - estimated_prompt)
-        if is_planner:
-            remaining = min(remaining, guard.config.planner_token_cap - guard.planner_tokens_used - estimated_prompt)
-        max_output = min(4096, remaining)
-        if max_output < 1:
-            guard.is_halted = True
-            guard.halt_reason = f"No token headroom remains for {seat.seat_id} after reserving the prompt budget."
-            raise BudgetCapExceededError(guard.halt_reason)
+        seat_id = seat.seat_id
+        reserved_tokens = 0
+        reserved_cost = 0.0
+        with self._budget_lock:
+            guard.check_headroom(seat_id, is_planner=is_planner,
+                                 estimated_tokens=estimated_prompt + 1,
+                                 is_local_tier=is_local_tier)
+            total_remaining = guard.config.total_token_cap - guard.total_tokens_used - self._reserved_total_tokens - estimated_prompt
+            seat_remaining = guard.config.per_seat_token_cap - guard.seat_tokens_used.get(seat_id, 0) - self._reserved_seat_tokens.get(seat_id, 0) - estimated_prompt
+            remaining = min(4096, total_remaining, seat_remaining)
+            if is_planner:
+                planner_remaining = guard.config.planner_token_cap - guard.planner_tokens_used - self._reserved_planner_tokens - estimated_prompt
+                remaining = min(remaining, planner_remaining)
+            if not is_local_tier:
+                # Cost accounting in HardBudgetGuard defaults to $0.003 / 1K tokens.
+                # Reserve conservatively at that rate until provider-reported usage arrives.
+                spend_remaining = guard.config.max_usd_cap - guard.total_cost_usd - self._reserved_cloud_cost_usd
+                remaining = min(remaining, int(spend_remaining * 1000 / 0.003) - estimated_prompt)
+            if remaining < 1:
+                guard.is_halted = True
+                guard.halt_reason = f"No budget headroom remains for {seat_id}; no model call was issued."
+                raise BudgetCapExceededError(guard.halt_reason)
+            reserved_tokens = estimated_prompt + remaining
+            reserved_cost = (reserved_tokens / 1000.0) * 0.003 if not is_local_tier else 0.0
+            self._reserved_total_tokens += reserved_tokens
+            self._reserved_seat_tokens[seat_id] = self._reserved_seat_tokens.get(seat_id, 0) + reserved_tokens
+            if is_planner:
+                self._reserved_planner_tokens += reserved_tokens
+            self._reserved_cloud_cost_usd += reserved_cost
+
         seat.current_thought = f"Generating with {getattr(llm, 'model_name', 'assigned model')}"
-        response = llm.generate(controlled, max_tokens=max_output)
-        actual_prompt = int(getattr(response, "prompt_tokens", 0) or estimated_prompt)
-        actual_completion = int(getattr(response, "completion_tokens", 0) or max(1, len(getattr(response, "content", "")) // 4))
-        guard.record_usage(seat.seat_id, actual_prompt, actual_completion, is_planner=is_planner, is_local_tier=is_local_tier)
-        seat.tokens_consumed += actual_prompt + actual_completion
-        seat.calls_made += 1
-        seat.token_usage_estimated = not bool(getattr(response, "prompt_tokens", 0) and getattr(response, "completion_tokens", 0))
-        # A provider can ignore requested limits. Fail closed before any later phase/merge.
-        if guard.total_tokens_used > guard.config.total_token_cap or guard.seat_tokens_used[seat.seat_id] > guard.config.per_seat_token_cap or (is_planner and guard.planner_tokens_used > guard.config.planner_token_cap):
-            guard.is_halted = True
-            guard.halt_reason = f"Observed provider usage exceeded a configured token cap for {seat.seat_id}; no further model calls are allowed."
-            raise BudgetCapExceededError(guard.halt_reason)
-        return response
+        try:
+            response = llm.generate(controlled, max_tokens=remaining)
+            actual_prompt = int(getattr(response, "prompt_tokens", 0) or estimated_prompt)
+            actual_completion = int(getattr(response, "completion_tokens", 0) or max(1, len(getattr(response, "content", "")) // 4))
+            with self._budget_lock:
+                guard.record_usage(seat_id, actual_prompt, actual_completion,
+                                   is_planner=is_planner, is_local_tier=is_local_tier)
+                seat.tokens_consumed += actual_prompt + actual_completion
+                seat.calls_made += 1
+                seat.token_usage_estimated = not bool(getattr(response, "prompt_tokens", 0) and getattr(response, "completion_tokens", 0))
+                if (guard.total_tokens_used > guard.config.total_token_cap or
+                    guard.seat_tokens_used[seat_id] > guard.config.per_seat_token_cap or
+                    (is_planner and guard.planner_tokens_used > guard.config.planner_token_cap) or
+                    (not is_local_tier and guard.total_cost_usd > guard.config.max_usd_cap)):
+                    guard.is_halted = True
+                    guard.halt_reason = f"Observed provider usage exceeded a configured cap for {seat_id}; no further model calls are allowed."
+                    raise BudgetCapExceededError(guard.halt_reason)
+            return response
+        finally:
+            with self._budget_lock:
+                self._reserved_total_tokens = max(0, self._reserved_total_tokens - reserved_tokens)
+                self._reserved_seat_tokens[seat_id] = max(0, self._reserved_seat_tokens.get(seat_id, 0) - reserved_tokens)
+                if is_planner:
+                    self._reserved_planner_tokens = max(0, self._reserved_planner_tokens - reserved_tokens)
+                self._reserved_cloud_cost_usd = max(0.0, self._reserved_cloud_cost_usd - reserved_cost)
 
     def _workspace_context(self, max_chars: int = 10000) -> str:
         """Build a bounded, secret-aware snapshot from the real workspace on disk."""
@@ -706,7 +753,48 @@ class AgentUFOCoordinator:
             "Return the complete target file content inside one fenced code block, not a diff and not an explanation."
         )
         builder.current_thought = "Generating implementation"
-        resp_bld = self._generate_with_budget(builder, llm_bld, bld_prompt, is_planner=False, is_local_tier=(tier_bld == "local"))
+        audit_seat = reviewer if reviewer.seat_id != builder.seat_id else architect
+        audit_index = self.seats.index(audit_seat)
+        llm_audit, tier_audit = self._resolve_llm_and_tier(audit_index, audit_seat.seat_id, is_planner=False)
+        audit_seat.tier_used = tier_audit
+        audit_seat.current_thought = "Auditing architecture and security constraints in parallel with implementation"
+        audit_seat.status = "working"
+        security_prompt = (
+            "You are AgentUFO's independent Security/Quality Auditor. This task is intentionally "
+            "independent of code generation and runs concurrently with the Builder. Review the user "
+            "request and architecture specification for concrete risks: secret exposure, path traversal, "
+            "unsafe execution, missing authorization, destructive changes, data validation, and test gaps. "
+            "Do not invent repository facts. Return concise actionable findings, each prefixed BLOCKER, "
+            "RISK, or NOTE. This is advisory analysis; the deterministic test/review gate remains authoritative.\n\n"
+            f"Task:\n{task}\n\nArchitecture specification:\n{resp_arch.content[:12000]}"
+        )
+        # Real concurrency: Builder implements while Reviewer independently audits the plan.
+        # The budget guard above reserves aggregate headroom atomically for both calls.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="agentufo-crew") as pool:
+            builder_future = pool.submit(self._generate_with_budget, builder, llm_bld, bld_prompt,
+                                         is_planner=False, is_local_tier=(tier_bld == "local"))
+            reviewer_future = pool.submit(self._generate_with_budget, audit_seat, llm_audit, security_prompt,
+                                          is_planner=False, is_local_tier=(tier_audit == "local"))
+            try:
+                resp_bld = builder_future.result()
+                resp_security = reviewer_future.result()
+            except Exception:
+                # Do not leave a peer task running after a provider/budget failure.
+                for future in (builder_future, reviewer_future):
+                    future.cancel()
+                raise
+        audit_seat.current_thought = "Independent architecture audit complete; waiting for executable verification"
+        if audit_seat is architect:
+            audit_seat.status = "completed"
+        self.post_message(
+            from_seat=audit_seat.seat_id,
+            to_seat=builder.seat_id,
+            msg_type="security_audit",
+            title="Parallel architecture/security audit",
+            payload={"advisory_findings": resp_security.content[:12000], "authoritative_gate": "sandbox tests and review gate"},
+        )
+        emit("Independent security/quality audit completed in parallel with implementation.", 58,
+             {"status": "parallel_review_complete", "advisory_only": True})
 
         code_candidate = self._extract_code(resp_bld.content)
 
