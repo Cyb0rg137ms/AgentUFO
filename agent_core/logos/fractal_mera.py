@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 @dataclass
 class MERANode:
     """A node in the MERA hierarchical tree."""
+
     scale: int  # 0 to 3
     name: str
     representation: str
@@ -61,10 +62,12 @@ class FractalReasoningEngine:
         # Parse AST safely
         try:
             tree = ast.parse(code)
-        except Exception as e:
+        except Exception:
             # Fallback for partial/buggy code
             hierarchy[0].append(MERANode(0, "raw_text", f"Unparsed tokens (len={len(code)})"))
-            hierarchy[3].append(MERANode(3, "syntax_integrity", "Syntax parse error", confidence=0.0))
+            hierarchy[3].append(
+                MERANode(3, "syntax_integrity", "Syntax parse error", confidence=0.0)
+            )
             return hierarchy
 
         # Scale 0: AST Tokens / Micro-statements
@@ -86,11 +89,17 @@ class FractalReasoningEngine:
                         name=f"func_{node.name}",
                         representation=node_repr,
                         entangled_children=args,
-                        invariants=["contains_return_statement" if any(isinstance(n, ast.Return) for n in ast.walk(node)) else "no_return_statement_detected"],
+                        invariants=[
+                            "contains_return_statement"
+                            if any(isinstance(n, ast.Return) for n in ast.walk(node))
+                            else "no_return_statement_detected"
+                        ],
                     )
                 )
             elif isinstance(node, ast.If):
-                cond_repr = ast.unparse(node.test) if hasattr(ast, "unparse") else "branch_condition"
+                cond_repr = (
+                    ast.unparse(node.test) if hasattr(ast, "unparse") else "branch_condition"
+                )
                 hierarchy[1].append(
                     MERANode(
                         scale=1,
@@ -114,15 +123,21 @@ class FractalReasoningEngine:
 
         # Scale 3: Meta system guarantees
         has_guards = any("guard" in n.name for n in hierarchy[1])
-        has_doc = any(isinstance(n, ast.FunctionDef) and ast.get_docstring(n) for n in ast.walk(tree))
+        has_doc = any(
+            isinstance(n, ast.FunctionDef) and ast.get_docstring(n) for n in ast.walk(tree)
+        )
         hierarchy[3].append(
             MERANode(
                 scale=3,
                 name="system_invariants",
                 representation="Global verification status",
                 invariants=[
-                    "Branch conditions detected; edge-case coverage remains unverified" if has_guards else "No branch guards detected; edge cases may be unhandled",
-                    "Function docstrings present; correctness remains unverified" if has_doc else "Missing function docstrings",
+                    "Branch conditions detected; edge-case coverage remains unverified"
+                    if has_guards
+                    else "No branch guards detected; edge cases may be unhandled",
+                    "Function docstrings present; correctness remains unverified"
+                    if has_doc
+                    else "Missing function docstrings",
                 ],
                 confidence=0.88 if (has_guards and has_doc) else 0.80,
             )

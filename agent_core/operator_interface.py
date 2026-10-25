@@ -11,51 +11,64 @@ from __future__ import annotations
 
 import ast
 import concurrent.futures
-import json
 import math
 import os
 import re
 import time
-from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Generic, TypeVar
+from pathlib import Path
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
-from agent_core.llm.base import BaseLLMProvider, LLMResponse
-from agent_core.llm.registry import LLMRegistry
-from agent_core.sandbox import CodeExecutionSandbox
+from agent_core.bridgemind_swarm import (
+    BridgeMindMode,
+    BridgeMindSwarmCoordinator,
+    SwarmTokenPolicy,
+)
 from agent_core.execution_trace import ExecutionTrace
-from agent_core.tools import ToolRegistry, ToolResult
-from agent_core.memory import ConversationBuffer, EpisodicStore, MultiLayerContinuousMemory
+from agent_core.hybrid_tiering import HybridTieringCoordinator
+from agent_core.llm.base import BaseLLMProvider
+from agent_core.llm.registry import LLMRegistry
 from agent_core.logos import (
-    MasterIndexDecomposer,
+    AntichainParallelExecutor,
+    DAGTaskNode,
+    DependencyDAG,
     DualFrameworkConvergenceEngine,
+    DynamicAxiomRetriever,
     FractalReasoningEngine,
     HolographicMemoryEngine,
+    MasterIndexDecomposer,
     NASTopologyEngine,
-    DynamicAxiomRetriever,
     PonderingEngine,
     QditSearchAccelerator,
-    QditState,
-    ExactClassicalVerifier,
-    DependencyDAG,
-    DAGTaskNode,
-    AntichainParallelExecutor,
 )
-from agent_core.logos.decomposition import BlueprintEngine, ArchitectureBlueprint, BlueprintComponent
-from agent_core.logos.recursive_auditor import RigorousAuditor, AuditReport
-from agent_core.hybrid_tiering import HybridTieringCoordinator, LocalCapabilityInspector
-from agent_core.bridgemind_swarm import (
-    BridgeMindSwarmCoordinator,
-    BridgeMindMode,
-    SwarmTokenPolicy,
-    BridgeMindSwarmReport,
+from agent_core.logos.decomposition import (
+    BlueprintEngine,
 )
+from agent_core.logos.recursive_auditor import RigorousAuditor
+from agent_core.memory import ConversationBuffer, EpisodicStore, MultiLayerContinuousMemory
+from agent_core.sandbox import CodeExecutionSandbox
+from agent_core.tools import ToolRegistry
+
+if TYPE_CHECKING:
+    from agent_core.logos.decomposition import Subquestion
 
 
 @dataclass
 class ProgressEvent:
     """Live telemetry event streamed during LOGOS + Sandbox pipeline execution."""
+
     phase: str  # e.g. "classification", "planning", "cognition", "blueprint", "implementation", "verification", "completed"
     status: str  # "started", "in_progress", "completed", "failed"
     message: str
@@ -78,6 +91,7 @@ class ProgressEvent:
 @dataclass
 class SandboxSessionReport:
     """Detailed execution telemetry from an LLM-driven sandbox session."""
+
     task: str
     status: str  # "success" or "failed"
     provider: str
@@ -142,6 +156,7 @@ class SandboxSessionReport:
 # =======================================================================
 # TypeSafe AI Jev Fast Decision Primitives & Engine
 # =======================================================================
+
 
 class TaskIntent(str, Enum):
     CODING = "CODING"
@@ -293,22 +308,43 @@ class JevDecisionEngine:
 
         # 5. Boolean Gates (Noul)
         req_sandbox = JevNoul(
-            decision=intent.value in (TaskIntent.CODING, TaskIntent.MCP_DEV, TaskIntent.MATH_REASONING) or any(w in p_lower for w in ["run", "execute", "test", "build", "code", "implement"]),
+            decision=intent.value
+            in (TaskIntent.CODING, TaskIntent.MCP_DEV, TaskIntent.MATH_REASONING)
+            or any(w in p_lower for w in ["run", "execute", "test", "build", "code", "implement"]),
             probability=0.98 if intent.value in (TaskIntent.CODING, TaskIntent.MCP_DEV) else 0.05,
             gate_name="requires_sandbox",
         )
         has_canvas = JevNoul(
-            decision=any(w in p_lower for w in ["canvas", "game", "temple run", "runner", "arcade", "animation", "interactive", "three.js", "webgl", "html5 game"]),
+            decision=any(
+                w in p_lower
+                for w in [
+                    "canvas",
+                    "game",
+                    "temple run",
+                    "runner",
+                    "arcade",
+                    "animation",
+                    "interactive",
+                    "three.js",
+                    "webgl",
+                    "html5 game",
+                ]
+            ),
             probability=0.99 if any(w in p_lower for w in ["canvas", "game", "runner"]) else 0.01,
             gate_name="has_interactive_canvas",
         )
         req_blueprint = JevNoul(
-            decision=complexity.score >= 5.0 or has_canvas.decision or intent.value == TaskIntent.MCP_DEV,
+            decision=complexity.score >= 5.0
+            or has_canvas.decision
+            or intent.value == TaskIntent.MCP_DEV,
             probability=0.95,
             gate_name="requires_blueprint",
         )
         is_mcp = JevNoul(
-            decision=intent.value == TaskIntent.MCP_DEV or any(w in p_lower for w in ["mcp", "fastmcp", "model context protocol", "mcp server"]),
+            decision=intent.value == TaskIntent.MCP_DEV
+            or any(
+                w in p_lower for w in ["mcp", "fastmcp", "model context protocol", "mcp server"]
+            ),
             probability=0.99 if "mcp" in p_lower else 0.01,
             gate_name="is_mcp_operation",
         )
@@ -332,28 +368,74 @@ class JevDecisionEngine:
         p_low = prompt.lower()
         danger = any(
             p in p_low
-            for p in ["rm -rf", "format c:", "drop database", "delete all", "os.system('rm", "os.system(\"rm", ":(){ :|:& };:"]
+            for p in [
+                "rm -rf",
+                "format c:",
+                "drop database",
+                "delete all",
+                "os.system('rm",
+                'os.system("rm',
+                ":(){ :|:& };:",
+            ]
         )
-        return JevNoul(decision=not danger, probability=0.01 if danger else 0.999, gate_name="is_safe")
+        return JevNoul(
+            decision=not danger, probability=0.01 if danger else 0.999, gate_name="is_safe"
+        )
 
     def _classify_intent(self, p_lower: str) -> JevChoice[TaskIntent]:
         if any(w in p_lower for w in ["mcp", "model context protocol", "fastmcp", "mcp server"]):
             val = TaskIntent.MCP_DEV
             probs = {TaskIntent.MCP_DEV.value: 0.95, TaskIntent.CODING.value: 0.05}
             conf = 0.95
-        elif any(w in p_lower for w in ["zeta", "riemann", "higgs", "boson", "manifold", "montgomery", "eigenvalue"]):
+        elif any(
+            w in p_lower
+            for w in ["zeta", "riemann", "higgs", "boson", "manifold", "montgomery", "eigenvalue"]
+        ):
             val = TaskIntent.MATH_REASONING
             probs = {TaskIntent.MATH_REASONING.value: 0.92, TaskIntent.CODING.value: 0.08}
             conf = 0.92
-        elif any(w in p_lower for w in ["write", "code", "implement", "def ", "class ", "divide", "quicksort", "binary search", "sort", "algorithm", "python", "function", "fix", "solve", "bug", "refactor", "build", "create", "game", "canvas", "app", "make", "program", "script"]):
+        elif any(
+            w in p_lower
+            for w in [
+                "write",
+                "code",
+                "implement",
+                "def ",
+                "class ",
+                "divide",
+                "quicksort",
+                "binary search",
+                "sort",
+                "algorithm",
+                "python",
+                "function",
+                "fix",
+                "solve",
+                "bug",
+                "refactor",
+                "build",
+                "create",
+                "game",
+                "canvas",
+                "app",
+                "make",
+                "program",
+                "script",
+            ]
+        ):
             val = TaskIntent.CODING
             probs = {TaskIntent.CODING.value: 0.96, TaskIntent.CONVERSATIONAL.value: 0.04}
             conf = 0.96
-        elif any(w in p_lower for w in ["hello", "hi", "who are you", "what can you help", "hey", "greetings"]):
+        elif any(
+            w in p_lower
+            for w in ["hello", "hi", "who are you", "what can you help", "hey", "greetings"]
+        ):
             val = TaskIntent.CONVERSATIONAL
             probs = {TaskIntent.CONVERSATIONAL.value: 0.98, TaskIntent.CODING.value: 0.02}
             conf = 0.98
-        elif any(w in p_lower for w in ["architect", "system design", "microservice", "infrastructure"]):
+        elif any(
+            w in p_lower for w in ["architect", "system design", "microservice", "infrastructure"]
+        ):
             val = TaskIntent.SYSTEM_DESIGN
             probs = {TaskIntent.SYSTEM_DESIGN.value: 0.90, TaskIntent.CODING.value: 0.10}
             conf = 0.90
@@ -364,15 +446,24 @@ class JevDecisionEngine:
         return JevChoice(value=val, confidence=conf, probabilities=probs, latency_ms=0.1)
 
     def _classify_target(self, p_lower: str, intent: TaskIntent) -> JevChoice[CodeTargetType]:
-        if any(w in p_lower for w in ["canvas", "game", "runner", "arcade", "html", "html5", "animation"]):
+        if any(
+            w in p_lower
+            for w in ["canvas", "game", "runner", "arcade", "html", "html5", "animation"]
+        ):
             val = CodeTargetType.HTML5_APP
         elif intent == TaskIntent.MCP_DEV:
             val = CodeTargetType.MCP_SERVER
         elif intent == TaskIntent.CODING or intent == TaskIntent.MATH_REASONING:
-            val = CodeTargetType.ALGORITHM if "algorithm" in p_lower or "sort" in p_lower else CodeTargetType.PYTHON_SCRIPT
+            val = (
+                CodeTargetType.ALGORITHM
+                if "algorithm" in p_lower or "sort" in p_lower
+                else CodeTargetType.PYTHON_SCRIPT
+            )
         else:
             val = CodeTargetType.NONE
-        return JevChoice(value=val, confidence=0.94, probabilities={val.value: 0.94}, latency_ms=0.1)
+        return JevChoice(
+            value=val, confidence=0.94, probabilities={val.value: 0.94}, latency_ms=0.1
+        )
 
     def _compute_complexity(self, prompt: str, intent: TaskIntent) -> JevScore:
         score = 2.0
@@ -383,7 +474,10 @@ class JevDecisionEngine:
             score += 2.0
         if intent in (TaskIntent.CODING, TaskIntent.MCP_DEV, TaskIntent.MATH_REASONING):
             score += 2.5
-        if any(w in prompt.lower() for w in ["game", "canvas", "3d", "distributed", "compiler", "engine", "quantum"]):
+        if any(
+            w in prompt.lower()
+            for w in ["game", "canvas", "3d", "distributed", "compiler", "engine", "quantum"]
+        ):
             score += 2.5
         score = min(10.0, score)
         return JevScore(score=score, min_scale=0.0, max_scale=10.0, confidence=0.95, latency_ms=0.1)
@@ -445,7 +539,9 @@ class SandboxOperatorInterface:
         self.auditor = RigorousAuditor(self.llm)
         self.multi_layer_mem = MultiLayerContinuousMemory()
         self.qdit_accelerator = QditSearchAccelerator(d_physical=10, max_bond_dim=16)
-        trace_dir = Path(os.environ.get("AGENTUFO_TRACE_DIR", str(Path.cwd() / ".agentufo" / "traces")))
+        trace_dir = Path(
+            os.environ.get("AGENTUFO_TRACE_DIR", str(Path.cwd() / ".agentufo" / "traces"))
+        )
         self.execution_trace = ExecutionTrace(trace_dir / "dag-events.jsonl")
         self.dag_executor = AntichainParallelExecutor(
             max_workers=min(8, max(2, os.cpu_count() or 4)), trace=self.execution_trace
@@ -490,36 +586,63 @@ class SandboxOperatorInterface:
         content_lower = chunk_content.lower()
         if "<html" in content_lower or "<canvas" in content_lower:
             has_script = "<script" not in content_lower or "</script>" in content_lower
-            return chunk_content, score, {
-                "status": "static_html_markers_detected" if has_script else "html_script_structure_incomplete",
-                "syntax_or_structure_checked": True,
-                "semantic_correctness_verified": False,
-                "confidence_calibrated": False,
-            }
+            return (
+                chunk_content,
+                score,
+                {
+                    "status": "static_html_markers_detected"
+                    if has_script
+                    else "html_script_structure_incomplete",
+                    "syntax_or_structure_checked": True,
+                    "semantic_correctness_verified": False,
+                    "confidence_calibrated": False,
+                },
+            )
 
         try:
             ast.parse(chunk_content)
-            return chunk_content, score, {
-                "status": "python_syntax_valid",
-                "syntax_or_structure_checked": True,
-                "semantic_correctness_verified": False,
-                "confidence_calibrated": False,
-            }
-        except SyntaxError as syntax_error:
-            python_indicators = re.search(r"\b(def|import|from|class|return|elif|lambda|None|True|False)\b", chunk_content) is not None
-            if not python_indicators:
-                return chunk_content, score, {
-                    "status": "not_recognized_as_python_source",
-                    "syntax_or_structure_checked": False,
+            return (
+                chunk_content,
+                score,
+                {
+                    "status": "python_syntax_valid",
+                    "syntax_or_structure_checked": True,
                     "semantic_correctness_verified": False,
                     "confidence_calibrated": False,
-                }
-            if not (self.llm and hasattr(self.llm, "generate") and getattr(self.llm, "is_available", lambda: True)()):
-                return chunk_content, score, {
-                    "status": "syntax_error_no_provider_repair",
-                    "error": str(syntax_error),
-                    "confidence_calibrated": False,
-                }
+                },
+            )
+        except SyntaxError as syntax_error:
+            python_indicators = (
+                re.search(
+                    r"\b(def|import|from|class|return|elif|lambda|None|True|False)\b", chunk_content
+                )
+                is not None
+            )
+            if not python_indicators:
+                return (
+                    chunk_content,
+                    score,
+                    {
+                        "status": "not_recognized_as_python_source",
+                        "syntax_or_structure_checked": False,
+                        "semantic_correctness_verified": False,
+                        "confidence_calibrated": False,
+                    },
+                )
+            if not (
+                self.llm
+                and hasattr(self.llm, "generate")
+                and getattr(self.llm, "is_available", lambda: True)()
+            ):
+                return (
+                    chunk_content,
+                    score,
+                    {
+                        "status": "syntax_error_no_provider_repair",
+                        "error": str(syntax_error),
+                        "confidence_calibrated": False,
+                    },
+                )
 
         topology = self.nas.search_optimal_topology(
             f"Repair syntax in {chunk_name}; do not claim correctness without tests"
@@ -537,25 +660,35 @@ class SandboxOperatorInterface:
                 temperature=0.1,
                 max_tokens=self._safe_llm_max_tokens(4096),
             )
-            repaired = self.llm.extract_code_block(response.content, "python") or response.content.strip()
+            repaired = (
+                self.llm.extract_code_block(response.content, "python") or response.content.strip()
+            )
             try:
                 ast.parse(repaired)
                 status = "syntax_repair_returned_parseable_code"
             except SyntaxError:
                 status = "repair_returned_unparseable_code"
-            return repaired, score, {
-                "status": status,
-                "syntax_or_structure_checked": True,
-                "semantic_correctness_verified": False,
-                "confidence_calibrated": False,
-                "provider_reported_tokens": int(getattr(response, "total_tokens", 0) or 0),
-            }
+            return (
+                repaired,
+                score,
+                {
+                    "status": status,
+                    "syntax_or_structure_checked": True,
+                    "semantic_correctness_verified": False,
+                    "confidence_calibrated": False,
+                    "provider_reported_tokens": int(getattr(response, "total_tokens", 0) or 0),
+                },
+            )
         except Exception as exc:
-            return chunk_content, score, {
-                "status": "repair_failed",
-                "error": str(exc)[:240],
-                "confidence_calibrated": False,
-            }
+            return (
+                chunk_content,
+                score,
+                {
+                    "status": "repair_failed",
+                    "error": str(exc)[:240],
+                    "confidence_calibrated": False,
+                },
+            )
 
     def solve_task(
         self,
@@ -581,8 +714,16 @@ class SandboxOperatorInterface:
         progress_log: List[Dict[str, Any]] = []
         total_tokens = 0
 
-        def emit(phase: str, status: str, message: str, pct: int, details: Optional[Dict[str, Any]] = None):
-            ev = ProgressEvent(phase=phase, status=status, message=message, progress_pct=pct, details=details or {})
+        def emit(
+            phase: str,
+            status: str,
+            message: str,
+            pct: int,
+            details: Optional[Dict[str, Any]] = None,
+        ):
+            ev = ProgressEvent(
+                phase=phase, status=status, message=message, progress_pct=pct, details=details or {}
+            )
             progress_log.append(ev.to_dict())
             if progress_callback:
                 try:
@@ -594,22 +735,43 @@ class SandboxOperatorInterface:
 
         # Check for BridgeMind Multi-Agent Swarm execution
         if swarm_agents >= 2 and swarm_mode:
-            emit("swarm", "started", f"Activating BridgeMind Swarm with {swarm_agents} agents in '{swarm_mode}' mode (Policy: {swarm_policy})...", 10)
-            mode_enum = BridgeMindMode(swarm_mode) if swarm_mode in ("split_work", "competitive_consensus") else BridgeMindMode.COMPETITIVE_CONSENSUS
-            pol_enum = SwarmTokenPolicy(swarm_policy) if swarm_policy in ("all", "leader_only", "cloud_only") else SwarmTokenPolicy.ALL
+            emit(
+                "swarm",
+                "started",
+                f"Activating BridgeMind Swarm with {swarm_agents} agents in '{swarm_mode}' mode (Policy: {swarm_policy})...",
+                10,
+            )
+            mode_enum = (
+                BridgeMindMode(swarm_mode)
+                if swarm_mode in ("split_work", "competitive_consensus")
+                else BridgeMindMode.COMPETITIVE_CONSENSUS
+            )
+            pol_enum = (
+                SwarmTokenPolicy(swarm_policy)
+                if swarm_policy in ("all", "leader_only", "cloud_only")
+                else SwarmTokenPolicy.ALL
+            )
             swarm_coord = BridgeMindSwarmCoordinator(
                 cloud_llm=self.llm,
-                local_llm=getattr(self.hybrid_coordinator, "local_llm", None) if hasattr(self, "hybrid_coordinator") else None,
+                local_llm=getattr(self.hybrid_coordinator, "local_llm", None)
+                if hasattr(self, "hybrid_coordinator")
+                else None,
                 num_agents=swarm_agents,
                 mode=mode_enum,
                 token_policy=pol_enum,
                 sandbox=self.sandbox,
             )
+
             def _swarm_cb(msg: str, pct: int, det: Dict[str, Any]):
                 emit("swarm", "in_progress", msg, pct, det)
 
             swarm_res = swarm_coord.execute_swarm(task_description, progress_callback=_swarm_cb)
-            emit("completed", "completed", f"BridgeMind Swarm finished successfully. Winner: {swarm_res.winning_agent_id}", 100)
+            emit(
+                "completed",
+                "completed",
+                f"BridgeMind Swarm finished successfully. Winner: {swarm_res.winning_agent_id}",
+                100,
+            )
             return SandboxSessionReport(
                 task=task_description,
                 status=swarm_res.status,
@@ -618,13 +780,19 @@ class SandboxOperatorInterface:
                 iterations=1,
                 final_code=swarm_res.final_code,
                 test_logs="BridgeMind swarm returned a result; inspect the included swarm report for its actual validation details.",
-                review={"approved": swarm_res.status == "success", "security_check": "not_independently_verified", "style_score": None},
+                review={
+                    "approved": swarm_res.status == "success",
+                    "security_check": "not_independently_verified",
+                    "style_score": None,
+                },
                 topology_used="bridgemind_swarm",
                 qualified_properties_count=len(swarm_res.agents),
                 holographic_stats=self.holographic_mem.get_boundary_compression_stats(),
                 elapsed_time_s=swarm_res.elapsed_time_s,
                 history=[{"attempt": 1, "code": swarm_res.final_code, "success": True}],
-                blueprint={"system_layout": f"BridgeMind Swarm with {swarm_agents} agents in {swarm_mode} mode"},
+                blueprint={
+                    "system_layout": f"BridgeMind Swarm with {swarm_agents} agents in {swarm_mode} mode"
+                },
                 convergence_rounds=0,
                 fixed_point_reached=False,
                 verification_level="swarm_reported_unverified",
@@ -633,48 +801,97 @@ class SandboxOperatorInterface:
                 progress_log=progress_log,
                 total_tokens_used=swarm_res.total_tokens_consumed,
                 effective_tokens=int(swarm_res.total_tokens_consumed or 0),
-                hybrid_telemetry=self.hybrid_coordinator.get_status() if hasattr(self, "hybrid_coordinator") and self.hybrid_coordinator else None,
+                hybrid_telemetry=self.hybrid_coordinator.get_status()
+                if hasattr(self, "hybrid_coordinator") and self.hybrid_coordinator
+                else None,
                 swarm_report=swarm_res.to_dict(),
             )
 
         # Phase 0: Autonomous Research & Knowledge Discovery (Best-of-Best Scouting)
-        emit("research", "started", "Autonomous Knowledge Discovery: Scouting state-of-the-art patterns, libraries & algorithms...", 5)
+        emit(
+            "research",
+            "started",
+            "Autonomous Knowledge Discovery: Scouting state-of-the-art patterns, libraries & algorithms...",
+            5,
+        )
         search_knowledge = ""
         try:
             # Query web search for frontier solutions
-            query_words = [w for w in task_description.split() if len(w) > 2 and w.lower() not in ("write", "build", "code", "create", "make", "that", "this", "with")]
+            query_words = [
+                w
+                for w in task_description.split()
+                if len(w) > 2
+                and w.lower()
+                not in ("write", "build", "code", "create", "make", "that", "this", "with")
+            ]
             query = " ".join(query_words) or task_description
             search_res = self.tools.execute("web_search", query=query)
             if search_res.success and search_res.output:
                 search_knowledge = search_res.output
-                self.holographic_mem.store(f"Web Knowledge: {search_knowledge}", category="web_search")
-                emit("research", "completed", f"Discovered frontier patterns via autonomous knowledge engine ({len(search_knowledge)} chars).", 10)
+                self.holographic_mem.store(
+                    f"Web Knowledge: {search_knowledge}", category="web_search"
+                )
+                emit(
+                    "research",
+                    "completed",
+                    f"Discovered frontier patterns via autonomous knowledge engine ({len(search_knowledge)} chars).",
+                    10,
+                )
             else:
                 emit("research", "completed", "Referenced internal cognitive knowledge bases.", 10)
         except Exception:
             emit("research", "completed", "Core cognitive knowledge bases active.", 10)
-        self.holographic_mem.store_layer_chunk(0, "research", search_knowledge or "Core knowledge base referenced.")
-        self.multi_layer_mem.add_chunk(0, "research", search_knowledge or "Core knowledge base referenced.")
+        self.holographic_mem.store_layer_chunk(
+            0, "research", search_knowledge or "Core knowledge base referenced."
+        )
+        self.multi_layer_mem.add_chunk(
+            0, "research", search_knowledge or "Core knowledge base referenced."
+        )
 
         # Phase 1: Exploration with Generalized Refusal / Evasion Reframing
-        emit("planning", "started", f"Formulating most impressive architectural plan with evasion reframing for {self.llm.provider_name}/{self.llm.model_name}...", 15)
+        emit(
+            "planning",
+            "started",
+            f"Formulating most impressive architectural plan with evasion reframing for {self.llm.provider_name}/{self.llm.model_name}...",
+            15,
+        )
         coherent_prefix = self.holographic_mem.build_coherent_context_for_next_layer()
 
         # Ask for the best / most impressive way to execute prompt; detect and reframe evasiveness
         raw_plan = self.decomposer.explore_impressive_execution(task_description)
         if self.decomposer.is_evasive_or_impossible(raw_plan):
-            emit("planning", "in_progress", "Evasive or impossible response detected: reframing into actionable operational engineering blueprint...", 20)
-            implementation_plan = self.decomposer.reframe_evasive_response(task_description, raw_plan)
+            emit(
+                "planning",
+                "in_progress",
+                "Evasive or impossible response detected: reframing into actionable operational engineering blueprint...",
+                20,
+            )
+            implementation_plan = self.decomposer.reframe_evasive_response(
+                task_description, raw_plan
+            )
         else:
             implementation_plan = raw_plan
 
-        self.holographic_mem.store(f"Implementation Plan: {implementation_plan}", category="implementation_plan")
+        self.holographic_mem.store(
+            f"Implementation Plan: {implementation_plan}", category="implementation_plan"
+        )
         self.holographic_mem.store_layer_chunk(1, "planning", implementation_plan)
         self.multi_layer_mem.add_chunk(1, "planning", implementation_plan)
-        emit("planning", "completed", f"Plan synthesized ({len(implementation_plan)} chars) | Operational blueprint established.", 25, {"plan": implementation_plan})
+        emit(
+            "planning",
+            "completed",
+            f"Plan synthesized ({len(implementation_plan)} chars) | Operational blueprint established.",
+            25,
+            {"plan": implementation_plan},
+        )
 
         # Phase 2: Parallel Recursive Fractal Decomposition & Qdit Search Space Compression
-        emit("cognition", "started", "Running parallel recursive fractal decomposition + Qdit search space compression (10-state qudit Hilbert space)...", 30)
+        emit(
+            "cognition",
+            "started",
+            "Running parallel recursive fractal decomposition + Qdit search space compression (10-state qudit Hilbert space)...",
+            30,
+        )
         topology = self.nas.search_optimal_topology(task_description)
         pondering_synthesis = self.pondering.evaluate_multi_angle(task_description)
 
@@ -686,10 +903,17 @@ class SandboxOperatorInterface:
         subquestions = layer1_subquestions  # Backwards compatibility
 
         # Qdit candidate ranking & search space reduction with exact classical verification
-        candidate_items = [{"id": sq.id, "text": sq.question, "dimension": sq.dimension} for sq in layer2_leaf_subquestions]
+        candidate_items = [
+            {"id": sq.id, "text": sq.question, "dimension": sq.dimension}
+            for sq in layer2_leaf_subquestions
+        ]
         _, qdit_state = self.qdit_accelerator.compress_and_rank_candidates(
             candidates=candidate_items,
-            scoring_fn=lambda c: 0.90 if any(k in c["dimension"] for k in ["BOUNDARY", "VERIFICATION", "COMPLEXITY"]) else 0.82,
+            scoring_fn=lambda c: (
+                0.90
+                if any(k in c["dimension"] for k in ["BOUNDARY", "VERIFICATION", "COMPLEXITY"])
+                else 0.82
+            ),
             top_k=max(1, len(candidate_items)),
         )
 
@@ -716,12 +940,19 @@ class SandboxOperatorInterface:
 
         f1_analysis = self.convergence.analyze_framework_1_classical(task_description)
         f2_analysis = self.convergence.analyze_framework_2_theory2(task_description)
-        alignment = self.convergence.construct_property_alignment_matrix(f1_analysis, f2_analysis, task_description)
+        alignment = self.convergence.construct_property_alignment_matrix(
+            f1_analysis, f2_analysis, task_description
+        )
         reduction_ratio = qdit_state.certificate.get("candidate_reduction_ratio")
-        reduction_label = f"{reduction_ratio}x candidate shortlist" if reduction_ratio is not None else "not measured"
+        reduction_label = (
+            f"{reduction_ratio}x candidate shortlist"
+            if reduction_ratio is not None
+            else "not measured"
+        )
         fidelity_label = (
             f"{qdit_state.reconstruction_fidelity:.2f}"
-            if qdit_state.certificate.get("reconstruction_fidelity_measured") else "not measured"
+            if qdit_state.certificate.get("reconstruction_fidelity_measured")
+            else "not measured"
         )
         cognition_summary = (
             f"Topology: {topology.topology_type.value} | 2-Layer Tree: {len(layer1_subquestions)} subsystems, "
@@ -733,8 +964,17 @@ class SandboxOperatorInterface:
         emit("cognition", "completed", cognition_summary, 40)
 
         # Phase 3: Blueprint Generation & Component Contracts
-        emit("blueprint", "started", "Generating architectural blueprint & component contracts...", 45)
-        invariants = [p.hypothesis for p in pondering_synthesis.qualified_properties if p.confidence >= self.pondering.CONFIDENCE_THRESHOLD]
+        emit(
+            "blueprint",
+            "started",
+            "Generating architectural blueprint & component contracts...",
+            45,
+        )
+        invariants = [
+            p.hypothesis
+            for p in pondering_synthesis.qualified_properties
+            if p.confidence >= self.pondering.CONFIDENCE_THRESHOLD
+        ]
         blueprint = self.blueprint_engine.generate_blueprint(
             task_description,
             topology_type=topology.topology_type.value,
@@ -755,23 +995,72 @@ class SandboxOperatorInterface:
         self.holographic_mem.store_blueprint(blueprint)
         self.holographic_mem.store_layer_chunk(3, "blueprint", blueprint.format_holographic_entry())
         self.multi_layer_mem.add_chunk(3, "blueprint", blueprint.format_holographic_entry())
-        emit("blueprint", "completed", f"Blueprint: {len(blueprint.components)} components | System: {blueprint.system_layout[:80]}", 50)
+        emit(
+            "blueprint",
+            "completed",
+            f"Blueprint: {len(blueprint.components)} components | System: {blueprint.system_layout[:80]}",
+            50,
+        )
 
         # Interactive detection
         interactive_keywords = [
-            "game", "arcade", "canvas", "flappy", "snake", "tetris", "pong",
-            "breakout", "invader", "pacman", "tictactoe", "tic-tac-toe",
-            "maze", "minesweeper", "temple run", "runner", "gui",
-            "calculator app", "todo app", "web app", "html5 app",
-            "ide", "editor", "dashboard", "app", "tool", "studio", "platform"
+            "game",
+            "arcade",
+            "canvas",
+            "flappy",
+            "snake",
+            "tetris",
+            "pong",
+            "breakout",
+            "invader",
+            "pacman",
+            "tictactoe",
+            "tic-tac-toe",
+            "maze",
+            "minesweeper",
+            "temple run",
+            "runner",
+            "gui",
+            "calculator app",
+            "todo app",
+            "web app",
+            "html5 app",
+            "ide",
+            "editor",
+            "dashboard",
+            "app",
+            "tool",
+            "studio",
+            "platform",
         ]
         is_interactive = any(k in task_description.lower() for k in interactive_keywords)
-        if any(k in task_description.lower() for k in ["python", "def ", "function", "class ", "algorithm", "quicksort", "sort", "search", "divide", "fibonacci", "tree", "graph"]):
+        if any(
+            k in task_description.lower()
+            for k in [
+                "python",
+                "def ",
+                "function",
+                "class ",
+                "algorithm",
+                "quicksort",
+                "sort",
+                "search",
+                "divide",
+                "fibonacci",
+                "tree",
+                "graph",
+            ]
+        ):
             if not any(k in task_description.lower() for k in ["pygame", "html", "canvas", "game"]):
                 is_interactive = False
 
         # Phase 4: MASSIVE PARALLEL EXECUTION OF ALL DECOMPOSED LEAF TASKS
-        emit("implementation", "started", f"Starting MASSIVE PARALLEL EXECUTION of all {len(layer2_leaf_subquestions)} decomposed tasks across LLM threads...", 55)
+        emit(
+            "implementation",
+            "started",
+            f"Starting MASSIVE PARALLEL EXECUTION of all {len(layer2_leaf_subquestions)} decomposed tasks across LLM threads...",
+            55,
+        )
 
         def _execute_leaf_task(leaf: Subquestion, leaf_idx: int) -> Tuple[Subquestion, str, float]:
             leaf_prompt = (
@@ -785,7 +1074,11 @@ class SandboxOperatorInterface:
             leaf_code = ""
             leaf_conf = 0.85
             try:
-                if hasattr(self, "hybrid_coordinator") and self.hybrid_coordinator and self.hybrid_coordinator.enabled:
+                if (
+                    hasattr(self, "hybrid_coordinator")
+                    and self.hybrid_coordinator
+                    and self.hybrid_coordinator.enabled
+                ):
                     l_resp, tier = self.hybrid_coordinator.generate(
                         prompt=leaf_prompt,
                         task_type="leaf_code",
@@ -800,10 +1093,10 @@ class SandboxOperatorInterface:
                     )
                 raw = l_resp.content.strip()
                 extracted = (
-                    self.llm.extract_code_block(raw, "html") or
-                    self.llm.extract_code_block(raw, "python") or
-                    self.llm.extract_code_block(raw, "javascript") or
-                    raw
+                    self.llm.extract_code_block(raw, "html")
+                    or self.llm.extract_code_block(raw, "python")
+                    or self.llm.extract_code_block(raw, "javascript")
+                    or raw
                 )
                 leaf_code, leaf_conf, _ = self.evaluate_and_elevate_confidence_with_nas(
                     chunk_name=f"LeafTask_{leaf.id}",
@@ -812,8 +1105,11 @@ class SandboxOperatorInterface:
                     task_context=task_description,
                 )
             except Exception as exc:
-                self.execution_trace.emit("leaf_generation.failed", task_id=leaf.id,
-                                          fields={"error": f"{type(exc).__name__}: {exc}"})
+                self.execution_trace.emit(
+                    "leaf_generation.failed",
+                    task_id=leaf.id,
+                    fields={"error": f"{type(exc).__name__}: {exc}"},
+                )
                 raise RuntimeError(f"Leaf generation failed for {leaf.id}") from exc
 
             leaf.code_snippet = leaf_code
@@ -827,7 +1123,12 @@ class SandboxOperatorInterface:
             return leaf, leaf_code, leaf_conf
 
         # Phase 4: MASSIVE PARALLEL EXECUTION OF ALL DECOMPOSED LEAF TASKS VIA DEPENDENCY DAG
-        emit("implementation", "started", f"Starting DEPENDENCY-AWARE PARALLEL EXECUTION of {len(layer2_leaf_subquestions)} tasks in concurrent antichains...", 55)
+        emit(
+            "implementation",
+            "started",
+            f"Starting DEPENDENCY-AWARE PARALLEL EXECUTION of {len(layer2_leaf_subquestions)} tasks in concurrent antichains...",
+            55,
+        )
 
         max_workers = min(8, max(2, os.cpu_count() or 4))
         leaf_results: Dict[str, str] = {}
@@ -838,8 +1139,11 @@ class SandboxOperatorInterface:
         execution_dag = DependencyDAG()
         for leaf in layer2_leaf_subquestions:
             leaf_deps = [dep for dep in leaf.dependencies if dep in leaf_ids]
-            execution_dag.add_task(leaf.id, f"Leaf {leaf.id}: {leaf.question[:60]}", leaf, leaf_deps)
+            execution_dag.add_task(
+                leaf.id, f"Leaf {leaf.id}: {leaf.question[:60]}", leaf, leaf_deps
+            )
         if len(execution_dag.nodes) > 0:
+
             def _dag_worker(node: DAGTaskNode) -> str:
                 leaf_sq = node.payload
                 _, code_out, _ = _execute_leaf_task(leaf_sq, 0)
@@ -847,9 +1151,16 @@ class SandboxOperatorInterface:
 
             def _dag_progress(node: DAGTaskNode, done: int, total: int):
                 pct = 55 + int((done / max(1, total)) * 15)
-                emit("implementation", "in_progress", f"Parallel DAG execution: completed {done}/{total} tasks ({node.id})", pct)
+                emit(
+                    "implementation",
+                    "in_progress",
+                    f"Parallel DAG execution: completed {done}/{total} tasks ({node.id})",
+                    pct,
+                )
 
-            dag_results = self.dag_executor.execute_dag(execution_dag, _dag_worker, progress_callback=_dag_progress)
+            dag_results = self.dag_executor.execute_dag(
+                execution_dag, _dag_worker, progress_callback=_dag_progress
+            )
             for nid, c in dag_results.items():
                 if c:
                     leaf_results[nid] = c
@@ -865,17 +1176,36 @@ class SandboxOperatorInterface:
                     try:
                         leaf_obj, leaf_code, conf = fut.result()
                         leaf_results[leaf_obj.id] = leaf_code
-                        pct = 55 + int((completed_count / max(1, len(layer2_leaf_subquestions))) * 15)
-                        emit("implementation", "in_progress", f"Parallel execution: completed {completed_count}/{len(layer2_leaf_subquestions)} tasks ({leaf_obj.id}) [Conf: {conf:.2f}]", pct)
+                        pct = 55 + int(
+                            (completed_count / max(1, len(layer2_leaf_subquestions))) * 15
+                        )
+                        emit(
+                            "implementation",
+                            "in_progress",
+                            f"Parallel execution: completed {completed_count}/{len(layer2_leaf_subquestions)} tasks ({leaf_obj.id}) [Conf: {conf:.2f}]",
+                            pct,
+                        )
                     except Exception:
                         pass
 
         # Phase 5: HIGH-PERFORMANCE UNIFIED SYSTEM CONSOLIDATION & PRODUCTION PACKAGING
-        emit("combining", "in_progress", "Synthesizing and consolidating components into a unified, production-ready system...", 75)
-        all_leaf_code = "\n\n".join(f"// Component {lid}:\n{code}" for lid, code in leaf_results.items() if code)
+        emit(
+            "combining",
+            "in_progress",
+            "Synthesizing and consolidating components into a unified, production-ready system...",
+            75,
+        )
+        all_leaf_code = "\n\n".join(
+            f"// Component {lid}:\n{code}" for lid, code in leaf_results.items() if code
+        )
 
         if is_interactive:
-            emit("combining", "in_progress", "Synthesizing complete interactive application (HTML5 Canvas + animations + event loop)...", 80)
+            emit(
+                "combining",
+                "in_progress",
+                "Synthesizing complete interactive application (HTML5 Canvas + animations + event loop)...",
+                80,
+            )
             interactive_prompt = (
                 f"TARGET TASK: {task_description}\n\n"
                 f"DECOMPOSED COMPONENT SPECIFICATIONS:\n{all_leaf_code}\n\n"
@@ -887,18 +1217,27 @@ class SandboxOperatorInterface:
                 "5. Zero placeholders, zero TODOs."
             )
             try:
-                c_resp = self.llm.generate(prompt=interactive_prompt, max_tokens=self._safe_llm_max_tokens(10_000_000))
+                c_resp = self.llm.generate(
+                    prompt=interactive_prompt, max_tokens=self._safe_llm_max_tokens(10_000_000)
+                )
                 total_tokens += int(getattr(c_resp, "total_tokens", 0) or 0)
                 code = (
-                    self.llm.extract_code_block(c_resp.content, "html") or
-                    self.llm.extract_code_block(c_resp.content) or
-                    c_resp.content.strip()
+                    self.llm.extract_code_block(c_resp.content, "html")
+                    or self.llm.extract_code_block(c_resp.content)
+                    or c_resp.content.strip()
                 )
             except Exception:
                 code = all_leaf_code
         else:
-            emit("combining", "in_progress", "Performing unified system architecture consolidation and contract verification...", 80)
-            todo_text = "\n".join(f"- [{c.id}] {c.name} ({c.subsystem}): {c.purpose}" for c in blueprint.components)
+            emit(
+                "combining",
+                "in_progress",
+                "Performing unified system architecture consolidation and contract verification...",
+                80,
+            )
+            todo_text = "\n".join(
+                f"- [{c.id}] {c.name} ({c.subsystem}): {c.purpose}" for c in blueprint.components
+            )
             synth_prompt = (
                 f"TARGET TASK: {task_description}\n\n"
                 f"IMPLEMENTED COMPONENTS:\n{all_leaf_code}\n\n"
@@ -911,12 +1250,14 @@ class SandboxOperatorInterface:
                 "Output ONLY the complete code inside a single markdown code block."
             )
             try:
-                c_resp = self.llm.generate(prompt=synth_prompt, max_tokens=self._safe_llm_max_tokens(10_000_000))
+                c_resp = self.llm.generate(
+                    prompt=synth_prompt, max_tokens=self._safe_llm_max_tokens(10_000_000)
+                )
                 total_tokens += int(getattr(c_resp, "total_tokens", 0) or 0)
                 code = (
-                    self.llm.extract_code_block(c_resp.content, "python") or
-                    self.llm.extract_code_block(c_resp.content) or
-                    c_resp.content.strip()
+                    self.llm.extract_code_block(c_resp.content, "python")
+                    or self.llm.extract_code_block(c_resp.content)
+                    or c_resp.content.strip()
                 )
             except Exception:
                 code = all_leaf_code
@@ -933,7 +1274,12 @@ class SandboxOperatorInterface:
         self.multi_layer_mem.add_chunk(4, "implementation", code)
 
         # Phase 6: BUG DETECTION, DIAGNOSIS & LLM SELF-HEALING FIX
-        emit("verification", "in_progress", "Checking for bugs: running AST verification, sandbox execution, and test assertions...", 85)
+        emit(
+            "verification",
+            "in_progress",
+            "Checking for bugs: running AST verification, sandbox execution, and test assertions...",
+            85,
+        )
         error_logs = ""
         test_logs = ""
         success = False
@@ -946,8 +1292,13 @@ class SandboxOperatorInterface:
             syntax_ok = True
             syntax_err = ""
             code_lower = code.lower()
-            is_html_artifact = any(marker in code_lower for marker in ("<html", "<!doctype html", "<canvas"))
-            python_indicators = re.search(r"\b(def|import|from|class|return|elif|lambda|None|True|False)\b", code) is not None
+            is_html_artifact = any(
+                marker in code_lower for marker in ("<html", "<!doctype html", "<canvas")
+            )
+            python_indicators = (
+                re.search(r"\b(def|import|from|class|return|elif|lambda|None|True|False)\b", code)
+                is not None
+            )
             if not is_html_artifact:
                 try:
                     ast.parse(code)
@@ -968,12 +1319,25 @@ class SandboxOperatorInterface:
                 "5. At the very end of the test script, print: `print('All tests passed')`\n"
                 "Output ONLY the test code inside a single ```python ``` block."
             )
-            if hasattr(self, "hybrid_coordinator") and self.hybrid_coordinator and self.hybrid_coordinator.enabled:
-                test_resp, _ = self.hybrid_coordinator.generate(prompt=test_prompt, task_type="unit_tests", max_tokens=self._safe_llm_max_tokens(4096))
+            if (
+                hasattr(self, "hybrid_coordinator")
+                and self.hybrid_coordinator
+                and self.hybrid_coordinator.enabled
+            ):
+                test_resp, _ = self.hybrid_coordinator.generate(
+                    prompt=test_prompt,
+                    task_type="unit_tests",
+                    max_tokens=self._safe_llm_max_tokens(4096),
+                )
             else:
-                test_resp = self.llm.generate(prompt=test_prompt, max_tokens=self._safe_llm_max_tokens(4096))
+                test_resp = self.llm.generate(
+                    prompt=test_prompt, max_tokens=self._safe_llm_max_tokens(4096)
+                )
             total_tokens += int(getattr(test_resp, "total_tokens", 0) or 0)
-            tests = self.llm.extract_code_block(test_resp.content, "python") or test_resp.content.strip()
+            tests = (
+                self.llm.extract_code_block(test_resp.content, "python")
+                or test_resp.content.strip()
+            )
 
             # Execute only code with an explicit verification path. Never convert a test-harness
             # SyntaxError into success merely because the source code parsed.
@@ -983,17 +1347,23 @@ class SandboxOperatorInterface:
                     has_canvas = "<canvas" in code_lower
                     has_script = "<script" in code_lower and "</script>" in code_lower
                     has_loop = "requestanimationframe" in code_lower or "setinterval" in code_lower
-                    has_input = "addeventlistener" in code_lower or "onkeydown" in code_lower or "onclick" in code_lower
+                    has_input = (
+                        "addeventlistener" in code_lower
+                        or "onkeydown" in code_lower
+                        or "onclick" in code_lower
+                    )
                     success = has_canvas and has_script and has_loop and has_input
                     test_logs = (
                         "Static interactive-app checks passed; no browser/runtime test was executed."
-                        if success else "Static interactive-app checks failed (canvas, script, loop, or input handler missing)."
+                        if success
+                        else "Static interactive-app checks failed (canvas, script, loop, or input handler missing)."
                     )
                 else:
                     success = has_html_shell
                     test_logs = (
                         "Static HTML shell checks passed; no browser/runtime test was executed."
-                        if success else "Static HTML checks failed: an opening and closing html tag are required."
+                        if success
+                        else "Static HTML checks failed: an opening and closing html tag are required."
                     )
             elif not syntax_ok:
                 success = False
@@ -1007,13 +1377,16 @@ class SandboxOperatorInterface:
             else:
                 try:
                     test_tree = ast.parse(tests)
-                    has_assertion = any(isinstance(node, ast.Assert) for node in ast.walk(test_tree))
+                    has_assertion = any(
+                        isinstance(node, ast.Assert) for node in ast.walk(test_tree)
+                    )
                     has_test_method = any(
                         isinstance(node, ast.Attribute) and node.attr.startswith("assert")
                         for node in ast.walk(test_tree)
                     )
                     has_test_function = any(
-                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
+                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and node.name.startswith("test_")
                         for node in ast.walk(test_tree)
                     )
                 except SyntaxError as exc:
@@ -1025,23 +1398,41 @@ class SandboxOperatorInterface:
                         test_logs = "Generated test harness contains no detectable assertions/test functions; verification refused."
                 else:
                     exec_script = f"{code}\n\n{tests}"
-                    success, test_logs = self.sandbox.execute_script(exec_script, filename="sandbox_test_runner.py")
+                    success, test_logs = self.sandbox.execute_script(
+                        exec_script, filename="sandbox_test_runner.py"
+                    )
 
-            history.append({
-                "attempt": attempt + 1,
-                "code": code,
-                "tests": tests if not (is_html_artifact or is_interactive) else "Static artifact checks only",
-                "success": success,
-                "logs": test_logs,
-            })
+            history.append(
+                {
+                    "attempt": attempt + 1,
+                    "code": code,
+                    "tests": tests
+                    if not (is_html_artifact or is_interactive)
+                    else "Static artifact checks only",
+                    "success": success,
+                    "logs": test_logs,
+                }
+            )
 
             if success:
-                verification_label = "static checks" if (is_html_artifact or is_interactive) else "sandbox tests"
-                emit("verification", "completed", f"{verification_label.capitalize()} passed on attempt {attempt + 1}.", 90)
+                verification_label = (
+                    "static checks" if (is_html_artifact or is_interactive) else "sandbox tests"
+                )
+                emit(
+                    "verification",
+                    "completed",
+                    f"{verification_label.capitalize()} passed on attempt {attempt + 1}.",
+                    90,
+                )
                 break
             else:
                 error_logs = test_logs or syntax_err
-                emit("verification", "in_progress", f"Bugs detected on attempt {attempt + 1}. Passing bugs to LLM for diagnosis & repair...", 87)
+                emit(
+                    "verification",
+                    "in_progress",
+                    f"Bugs detected on attempt {attempt + 1}. Passing bugs to LLM for diagnosis & repair...",
+                    87,
+                )
 
                 # Step 6A: Bug Diagnosis Pass via LLM
                 diag_prompt = (
@@ -1053,7 +1444,9 @@ class SandboxOperatorInterface:
                     "2. Specific defect location in code\n"
                     "3. Exact correction requirement and boundary guard."
                 )
-                diag_resp = self.llm.generate(prompt=diag_prompt, max_tokens=self._safe_llm_max_tokens(4096))
+                diag_resp = self.llm.generate(
+                    prompt=diag_prompt, max_tokens=self._safe_llm_max_tokens(4096)
+                )
                 total_tokens += int(getattr(diag_resp, "total_tokens", 0) or 0)
                 bug_diagnosis = diag_resp.content.strip()
 
@@ -1066,12 +1459,14 @@ class SandboxOperatorInterface:
                     "Fix ALL identified bugs in the code. Ensure zero regressions, complete boundary guards, and syntax perfection.\n"
                     "Output ONLY the complete, corrected code inside a single ```python ``` block."
                 )
-                fix_resp = self.llm.generate(prompt=fix_prompt, max_tokens=self._safe_llm_max_tokens(4096))
+                fix_resp = self.llm.generate(
+                    prompt=fix_prompt, max_tokens=self._safe_llm_max_tokens(4096)
+                )
                 total_tokens += int(getattr(fix_resp, "total_tokens", 0) or 0)
                 repaired = self.llm.extract_code_block(fix_resp.content, "python")
                 if repaired:
                     repaired, _, _ = self.evaluate_and_elevate_confidence_with_nas(
-                        chunk_name=f"BugFix_Attempt_{attempt+1}",
+                        chunk_name=f"BugFix_Attempt_{attempt + 1}",
                         chunk_content=repaired,
                         current_confidence=0.85,
                         task_context=task_description,
@@ -1082,11 +1477,18 @@ class SandboxOperatorInterface:
             "approved": success,
             "security_check": "heuristic_only_not_a_security_boundary",
             "style_score": None,
-            "verification_level": "static_only" if (is_interactive or "<html" in code.lower() or "<canvas" in code.lower()) else "python_tests",
+            "verification_level": "static_only"
+            if (is_interactive or "<html" in code.lower() or "<canvas" in code.lower())
+            else "python_tests",
         }
 
         # Step 4: Dual-Pass Rigorous Audit Pipeline (OO_1 -> OO_2 -> OO_3)
-        emit("audit", "in_progress", "Executing recursive dual-pass fixed-point audit convergence...", 90)
+        emit(
+            "audit",
+            "in_progress",
+            "Executing recursive dual-pass fixed-point audit convergence...",
+            90,
+        )
         tested_code = code
         current_code = code
         audit_history: List[Dict[str, Any]] = []
@@ -1129,14 +1531,21 @@ class SandboxOperatorInterface:
                 "Output ONLY the complete corrected code inside a single markdown block."
             )
 
-            if is_interactive or "<html" in current_code.lower() or "<canvas" in current_code.lower():
+            if (
+                is_interactive
+                or "<html" in current_code.lower()
+                or "<canvas" in current_code.lower()
+            ):
                 refine_resp = self.llm.generate(
                     prompt=refine_prompt,
                     system_prompt="You are repairing a web artifact. Output only complete HTML in a markdown block.",
                     max_tokens=self._safe_llm_max_tokens(4096),
                 )
                 total_tokens += int(getattr(refine_resp, "total_tokens", 0) or 0)
-                next_code = self.llm.extract_code_block(refine_resp.content, "html") or refine_resp.content.strip()
+                next_code = (
+                    self.llm.extract_code_block(refine_resp.content, "html")
+                    or refine_resp.content.strip()
+                )
             else:
                 refine_resp = self.llm.generate(
                     prompt=refine_prompt,
@@ -1144,25 +1553,38 @@ class SandboxOperatorInterface:
                     max_tokens=self._safe_llm_max_tokens(4096),
                 )
                 total_tokens += int(getattr(refine_resp, "total_tokens", 0) or 0)
-                next_code = self.llm.extract_code_block(refine_resp.content, "python") or refine_resp.content.strip()
+                next_code = (
+                    self.llm.extract_code_block(refine_resp.content, "python")
+                    or refine_resp.content.strip()
+                )
 
             if next_code:
                 current_code = next_code
 
         code = current_code
         # If the audit changed code after tests ran, re-run the original assertions against the final code.
-        if code != tested_code and (is_interactive or "<html" in code.lower() or "<canvas" in code.lower()):
+        if code != tested_code and (
+            is_interactive or "<html" in code.lower() or "<canvas" in code.lower()
+        ):
             final_lower = code.lower()
             if is_interactive:
-                success = all((
-                    "<canvas" in final_lower,
-                    "<script" in final_lower and "</script>" in final_lower,
-                    "requestanimationframe" in final_lower or "setinterval" in final_lower,
-                    "addeventlistener" in final_lower or "onkeydown" in final_lower or "onclick" in final_lower,
-                ))
+                success = all(
+                    (
+                        "<canvas" in final_lower,
+                        "<script" in final_lower and "</script>" in final_lower,
+                        "requestanimationframe" in final_lower or "setinterval" in final_lower,
+                        "addeventlistener" in final_lower
+                        or "onkeydown" in final_lower
+                        or "onclick" in final_lower,
+                    )
+                )
             else:
                 success = "<html" in final_lower and "</html>" in final_lower
-            test_logs = "Final HTML static checks passed; browser/runtime execution was not performed." if success else "Final HTML static checks failed after audit changes."
+            test_logs = (
+                "Final HTML static checks passed; browser/runtime execution was not performed."
+                if success
+                else "Final HTML static checks failed after audit changes."
+            )
         elif code != tested_code:
             if not tests.strip():
                 success = False
@@ -1171,17 +1593,31 @@ class SandboxOperatorInterface:
                 try:
                     ast.parse(code)
                     ast.parse(tests)
-                    success, test_logs = self.sandbox.execute_script(f"{code}\n\n{tests}", filename="sandbox_final_verification.py")
+                    success, test_logs = self.sandbox.execute_script(
+                        f"{code}\n\n{tests}", filename="sandbox_final_verification.py"
+                    )
                 except SyntaxError as exc:
                     success = False
                     test_logs = f"Final-code re-verification failed syntax parsing: {exc}"
 
         success = bool(success and fixed_point_reached)
         review["approved"] = success
-        review["verification_level"] = "static_only" if (is_interactive or "<html" in code.lower() or "<canvas" in code.lower()) else "python_tests_and_heuristic_audit"
+        review["verification_level"] = (
+            "static_only"
+            if (is_interactive or "<html" in code.lower() or "<canvas" in code.lower())
+            else "python_tests_and_heuristic_audit"
+        )
 
-        self.holographic_mem.store_layer_chunk(5, "verification_and_audit", f"Verification success={success} | Final code {len(code)} chars | Fixed point={fixed_point_reached}")
-        self.multi_layer_mem.add_chunk(5, "verification_and_audit", f"Verification success={success} | Final code {len(code)} chars | Fixed point={fixed_point_reached}")
+        self.holographic_mem.store_layer_chunk(
+            5,
+            "verification_and_audit",
+            f"Verification success={success} | Final code {len(code)} chars | Fixed point={fixed_point_reached}",
+        )
+        self.multi_layer_mem.add_chunk(
+            5,
+            "verification_and_audit",
+            f"Verification success={success} | Final code {len(code)} chars | Fixed point={fixed_point_reached}",
+        )
 
         # Step 5: Multi-Scale MERA Analysis & Memory Storage
         multiscale_mera = self.fractal_mera.analyze_code_multiscale(code)
@@ -1194,8 +1630,8 @@ class SandboxOperatorInterface:
 
         completion_message = (
             "Task completed; Python tests and heuristic static audits passed."
-            if success else
-            "Task finished with unresolved verification issues. Review the test logs and audit history before accepting changes."
+            if success
+            else "Task finished with unresolved verification issues. Review the test logs and audit history before accepting changes."
         )
         emit("completed", "completed" if success else "failed", completion_message, 100)
 
@@ -1213,7 +1649,9 @@ class SandboxOperatorInterface:
             qualified_properties_count=pondering_synthesis.qualified_properties_count,
             holographic_stats=self.holographic_mem.get_boundary_compression_stats(),
             qualified_properties=[p.to_dict() for p in pondering_synthesis.qualified_properties],
-            verification_level="static_only" if (is_interactive or "<html" in code.lower() or "<canvas" in code.lower()) else "python_tests_and_heuristic_audit",
+            verification_level="static_only"
+            if (is_interactive or "<html" in code.lower() or "<canvas" in code.lower())
+            else "python_tests_and_heuristic_audit",
             elapsed_time_s=elapsed,
             history=history,
             blueprint=blueprint.to_dict(),
@@ -1225,7 +1663,9 @@ class SandboxOperatorInterface:
             total_tokens_used=total_tokens,
             effective_tokens=int(total_tokens),
             token_usage_complete=False,
-            qdit_certificate=qdit_state.to_dict() if 'qdit_state' in locals() else None,
-            hybrid_telemetry=self.hybrid_coordinator.get_status() if hasattr(self, "hybrid_coordinator") and self.hybrid_coordinator else None,
+            qdit_certificate=qdit_state.to_dict() if "qdit_state" in locals() else None,
+            hybrid_telemetry=self.hybrid_coordinator.get_status()
+            if hasattr(self, "hybrid_coordinator") and self.hybrid_coordinator
+            else None,
             swarm_report=None,
         )

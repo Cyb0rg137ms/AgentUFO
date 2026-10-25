@@ -13,12 +13,10 @@ to work in parallel:
 from __future__ import annotations
 
 import json
-import os
 import re
-import time
 import urllib.request
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from agent_core.llm.base import BaseLLMProvider, LLMResponse
 from agent_core.llm.ollama_provider import OllamaProvider
@@ -27,6 +25,7 @@ from agent_core.llm.ollama_provider import OllamaProvider
 @dataclass
 class LocalModelCapability:
     """Capability profile inferred for a local model."""
+
     model_name: str
     family: str
     parameter_billions: float
@@ -77,7 +76,9 @@ class LocalCapabilityInspector:
     }
 
     @classmethod
-    def probe_ollama(cls, host: str = "http://localhost:11434", timeout: float = 1.5) -> List[LocalModelCapability]:
+    def probe_ollama(
+        cls, host: str = "http://localhost:11434", timeout: float = 1.5
+    ) -> List[LocalModelCapability]:
         """Probes the Ollama instance for installed models and extracts capabilities."""
         capabilities: List[LocalModelCapability] = []
         try:
@@ -97,12 +98,16 @@ class LocalCapabilityInspector:
         return capabilities
 
     @classmethod
-    def inspect_model(cls, model_name: str, details: Optional[Dict[str, Any]] = None) -> LocalModelCapability:
+    def inspect_model(
+        cls, model_name: str, details: Optional[Dict[str, Any]] = None
+    ) -> LocalModelCapability:
         """Alias for analyze_model."""
         return cls.analyze_model(model_name, details)
 
     @classmethod
-    def analyze_model(cls, model_name: str, details: Optional[Dict[str, Any]] = None) -> LocalModelCapability:
+    def analyze_model(
+        cls, model_name: str, details: Optional[Dict[str, Any]] = None
+    ) -> LocalModelCapability:
         """Analyzes a model name and metadata to determine capability profile."""
         name_lower = model_name.lower()
         details = details or {}
@@ -195,6 +200,7 @@ class LocalCapabilityInspector:
 @dataclass
 class TokenSavingsLedger:
     """Tracks token economy and monetary savings in hybrid mode."""
+
     cloud_prompt_tokens: int = 0
     cloud_completion_tokens: int = 0
     local_prompt_tokens: int = 0
@@ -214,14 +220,16 @@ class TokenSavingsLedger:
     def record_local_offload(self, prompt_tokens: int, completion_tokens: int) -> None:
         self.local_prompt_tokens += prompt_tokens
         self.local_completion_tokens += completion_tokens
-        self.saved_cloud_tokens += (prompt_tokens + completion_tokens)
+        self.saved_cloud_tokens += prompt_tokens + completion_tokens
         self.tasks_routed_to_local += 1
 
     @property
     def total_tokens_processed(self) -> int:
         return (
-            self.cloud_prompt_tokens + self.cloud_completion_tokens +
-            self.local_prompt_tokens + self.local_completion_tokens
+            self.cloud_prompt_tokens
+            + self.cloud_completion_tokens
+            + self.local_prompt_tokens
+            + self.local_completion_tokens
         )
 
     @property
@@ -329,7 +337,9 @@ class HybridTieringCoordinator:
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=temperature,
-                    max_tokens=min(max_tokens, getattr(self.capability, "max_recommended_tokens", 4096)),
+                    max_tokens=min(
+                        max_tokens, getattr(self.capability, "max_recommended_tokens", 4096)
+                    ),
                     **kwargs,
                 )
                 if resp and resp.content and resp.content.strip():
@@ -363,8 +373,12 @@ class HybridTieringCoordinator:
             "local_ready": self.is_local_ready(),
             "cloud_provider": getattr(self.cloud_llm, "provider_name", "none"),
             "cloud_model": getattr(self.cloud_llm, "model_name", "none"),
-            "local_provider": getattr(self.local_llm, "provider_name", "none") if self.local_llm else "none",
-            "local_model": getattr(self.local_llm, "model_name", "none") if self.local_llm else "none",
+            "local_provider": getattr(self.local_llm, "provider_name", "none")
+            if self.local_llm
+            else "none",
+            "local_model": getattr(self.local_llm, "model_name", "none")
+            if self.local_llm
+            else "none",
             "capability": self.capability.to_dict() if self.capability else None,
             "ledger": self.ledger.to_dict(),
         }

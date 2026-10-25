@@ -14,36 +14,37 @@ Integrates:
   - BlueprintEngine & RigorousAuditor
 """
 
-from agent_core.logos.decomposition import MasterIndexDecomposer, Subquestion
-from agent_core.logos.fractal_mera import FractalReasoningEngine, MERANode
-from agent_core.logos.holographic_memory import HolographicMemoryEngine, HolographicMemoryRecord
-from agent_core.logos.nas_topology import NASTopologyEngine, CognitiveTopology, TopologyType
-from agent_core.logos.dynamic_retrieval import DynamicAxiomRetriever, SearchResult
-from agent_core.logos.pondering_engine import PonderingEngine, PonderingAngle, PonderingSynthesis
 from agent_core.logos.convergence import (
     DualFrameworkConvergenceEngine,
     FrameworkAnalysisResult,
     PropertyAlignmentEntry,
 )
-from agent_core.logos.decomposition import (
-    BlueprintEngine,
-    ArchitectureBlueprint,
-    BlueprintComponent,
-)
-from agent_core.logos.recursive_auditor import RigorousAuditor, AuditReport
-from agent_core.logos.qdit_accelerator import (
-    QditSearchAccelerator,
-    QditTensorEngine,
-    QditState,
-    ExactClassicalVerifier,
-    NeuralVolumeLawResidualCache,
-)
 from agent_core.logos.dag_executor import (
-    DependencyDAG,
-    DAGTaskNode,
     AntichainParallelExecutor,
+    DAGTaskNode,
+    DependencyDAG,
     TaskStatus,
 )
+from agent_core.logos.decomposition import (
+    ArchitectureBlueprint,
+    BlueprintComponent,
+    BlueprintEngine,
+    MasterIndexDecomposer,
+    Subquestion,
+)
+from agent_core.logos.dynamic_retrieval import DynamicAxiomRetriever, SearchResult
+from agent_core.logos.fractal_mera import FractalReasoningEngine, MERANode
+from agent_core.logos.holographic_memory import HolographicMemoryEngine, HolographicMemoryRecord
+from agent_core.logos.nas_topology import CognitiveTopology, NASTopologyEngine, TopologyType
+from agent_core.logos.pondering_engine import PonderingAngle, PonderingEngine, PonderingSynthesis
+from agent_core.logos.qdit_accelerator import (
+    ExactClassicalVerifier,
+    NeuralVolumeLawResidualCache,
+    QditSearchAccelerator,
+    QditState,
+    QditTensorEngine,
+)
+from agent_core.logos.recursive_auditor import AuditReport, RigorousAuditor
 
 # Backward compatibility alias
 TopologyConfig = CognitiveTopology

@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
+
 from agent_core.sandbox import CodeExecutionSandbox
 
 
@@ -58,7 +59,7 @@ class MCPToolDefinition:
                 "type": "object",
                 "properties": properties,
                 "required": required,
-            }
+            },
         }
 
 
@@ -112,7 +113,7 @@ class MCPServerDefinition:
                     "schema": r.to_mcp_resource_schema(),
                 }
                 for r in self.resources
-            ]
+            ],
         }
 
 
@@ -126,6 +127,7 @@ class MCPServerScaffolder:
     def generate_python_server(server_def: MCPServerDefinition) -> str:
         """Produces a standalone FastMCP Python script."""
         import keyword
+
         for tool in server_def.tools:
             if not tool.name.isidentifier() or keyword.iskeyword(tool.name):
                 raise ValueError(f"Invalid MCP tool name: {tool.name!r}")
@@ -134,64 +136,67 @@ class MCPServerScaffolder:
                     raise ValueError(f"Invalid MCP parameter name: {parameter.name!r}")
         lines = [
             '"""Generated MCP server by AgentUFO."""',
-            f'# Server: {server_def.server_name!r} v{server_def.version!r}',
-            f'# Description: {server_def.description!r}',
-            '',
-            'from mcp.server.fastmcp import FastMCP',
-            'import json',
-            'import sys',
-            '',
-            f'mcp = FastMCP({json.dumps(server_def.server_name)})',
-            '',
+            f"# Server: {server_def.server_name!r} v{server_def.version!r}",
+            f"# Description: {server_def.description!r}",
+            "",
+            "from mcp.server.fastmcp import FastMCP",
+            "import json",
+            "import sys",
+            "",
+            f"mcp = FastMCP({json.dumps(server_def.server_name)})",
+            "",
         ]
 
         # Add tools
         for tool in server_def.tools:
-            docstring = f'    {json.dumps(tool.description)}'
-            params_str = ", ".join([f"{p.name}: {MCPServerScaffolder._py_type(p.param_type)}" for p in tool.parameters])
-            
-            lines.append(f'@mcp.tool()')
-            lines.append(f'def {tool.name}({params_str}) -> str:')
+            docstring = f"    {json.dumps(tool.description)}"
+            params_str = ", ".join(
+                [f"{p.name}: {MCPServerScaffolder._py_type(p.param_type)}" for p in tool.parameters]
+            )
+
+            lines.append("@mcp.tool()")
+            lines.append(f"def {tool.name}({params_str}) -> str:")
             lines.append(docstring)
             if tool.handler_code.strip():
                 for hline in tool.handler_code.strip().split("\n"):
                     lines.append(f"    {hline}")
             else:
-                lines.append(f'    return json.dumps({{"status": "success", "result": f"Executed {tool.name}"}})')
-            lines.append('')
+                lines.append(
+                    f'    return json.dumps({{"status": "success", "result": f"Executed {tool.name}"}})'
+                )
+            lines.append("")
 
         # Add resources
         for res in server_def.resources:
-            lines.append(f'@mcp.resource({json.dumps(res.uri)})')
-            lines.append(f'def get_{res.name.lower().replace(" ", "_")}() -> str:')
-            lines.append(f'    {json.dumps(res.description)}')
+            lines.append(f"@mcp.resource({json.dumps(res.uri)})")
+            lines.append(f"def get_{res.name.lower().replace(' ', '_')}() -> str:")
+            lines.append(f"    {json.dumps(res.description)}")
             if res.generator_code.strip():
                 for gline in res.generator_code.strip().split("\n"):
                     lines.append(f"    {gline}")
             else:
-                lines.append(f'    return json.dumps({{"uri": {json.dumps(res.uri)}, "name": {json.dumps(res.name)}}})')
-            lines.append('')
+                lines.append(
+                    f'    return json.dumps({{"uri": {json.dumps(res.uri)}, "name": {json.dumps(res.name)}}})'
+                )
+            lines.append("")
 
-        lines.extend([
-            'if __name__ == "__main__":',
-            '    print(f"Starting MCP Server {mcp.name} on stdio transport...", file=sys.stderr)',
-            '    mcp.run(transport="stdio")',
-            ''
-        ])
+        lines.extend(
+            [
+                'if __name__ == "__main__":',
+                '    print(f"Starting MCP Server {mcp.name} on stdio transport...", file=sys.stderr)',
+                '    mcp.run(transport="stdio")',
+                "",
+            ]
+        )
 
         return "\n".join(lines)
 
     @staticmethod
-    def generate_claude_desktop_config(server_def: MCPServerDefinition, script_path: str = "server.py") -> str:
+    def generate_claude_desktop_config(
+        server_def: MCPServerDefinition, script_path: str = "server.py"
+    ) -> str:
         """Generates Claude Desktop configuration snippet."""
-        cfg = {
-            "mcpServers": {
-                server_def.server_name: {
-                    "command": "python",
-                    "args": [script_path]
-                }
-            }
-        }
+        cfg = {"mcpServers": {server_def.server_name: {"command": "python", "args": [script_path]}}}
         return json.dumps(cfg, indent=2)
 
     @staticmethod
@@ -213,25 +218,45 @@ class MCPSandboxTester:
     to test custom user-written MCP handlers safely with isolated stdout/stderr.
     """
 
-    def __init__(self, sandbox: Optional[CodeExecutionSandbox] = None, *, allow_unsafe_host: bool = False) -> None:
+    def __init__(
+        self, sandbox: Optional[CodeExecutionSandbox] = None, *, allow_unsafe_host: bool = False
+    ) -> None:
         # Host execution is available only through an explicit development opt-in.
-        self.sandbox = sandbox or CodeExecutionSandbox(timeout_seconds=5.0, mode="host" if allow_unsafe_host else "container")
+        self.sandbox = sandbox or CodeExecutionSandbox(
+            timeout_seconds=5.0, mode="host" if allow_unsafe_host else "container"
+        )
 
     def test_tool_execution(
-        self,
-        tool: MCPToolDefinition,
-        arguments: Dict[str, Any]
+        self, tool: MCPToolDefinition, arguments: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Executes the tool's handler code in Python sandbox with simulated JSON-RPC inputs.
         """
         t0 = time.perf_counter()
         arg_json = json.dumps(arguments)
-        
+
         import keyword
-        valid_params = [p.name for p in tool.parameters if p.name.isidentifier() and not keyword.iskeyword(p.name)]
+
+        valid_params = [
+            p.name
+            for p in tool.parameters
+            if p.name.isidentifier() and not keyword.iskeyword(p.name)
+        ]
         if len(valid_params) != len(tool.parameters):
-            return {"tool_name": tool.name, "status": "error", "exit_code": 1, "elapsed_ms": 0, "stdout": "", "stderr": "Invalid parameter name in tool schema", "timed_out": False, "jsonrpc": {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Invalid parameter name in tool schema"}, "id": 1}}
+            return {
+                "tool_name": tool.name,
+                "status": "error",
+                "exit_code": 1,
+                "elapsed_ms": 0,
+                "stdout": "",
+                "stderr": "Invalid parameter name in tool schema",
+                "timed_out": False,
+                "jsonrpc": {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32602, "message": "Invalid parameter name in tool schema"},
+                    "id": 1,
+                },
+            }
         required_params = [p.name for p in tool.parameters if p.required]
         signature = ", ".join(f"{name}=None" for name in valid_params)
         test_script = f"""
@@ -300,11 +325,12 @@ except Exception as e:
             "stdout": logs,
             "stderr": "" if success else logs,
             "timed_out": "Process timed out" in logs,
-            "jsonrpc": jsonrpc_response or {
+            "jsonrpc": jsonrpc_response
+            or {
                 "jsonrpc": "2.0",
                 "error": {"code": -32603, "message": logs or "Execution failed"},
-                "id": 1
-            }
+                "id": 1,
+            },
         }
 
     @staticmethod
@@ -331,15 +357,15 @@ def get_default_mcp_presets() -> List[MCPServerDefinition]:
                     parameters=[
                         MCPToolParameter("query", "string", "SQL query string to run"),
                     ],
-                    handler_code="import sqlite3\nconn = sqlite3.connect(':memory:')\ncur = conn.cursor()\ncur.execute('CREATE TABLE users (id INT, name TEXT)')\ncur.execute(\"INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')\")\ncur.execute(query)\nrows = cur.fetchall()\nreturn json.dumps({'rows': rows})"
+                    handler_code="import sqlite3\nconn = sqlite3.connect(':memory:')\ncur = conn.cursor()\ncur.execute('CREATE TABLE users (id INT, name TEXT)')\ncur.execute(\"INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')\")\ncur.execute(query)\nrows = cur.fetchall()\nreturn json.dumps({'rows': rows})",
                 ),
                 MCPToolDefinition(
                     name="get_schema",
                     description="Returns current database tables and column definitions.",
                     parameters=[],
-                    handler_code="return json.dumps({'tables': ['users(id, name)', 'orders(id, user_id, amount)']})"
-                )
-            ]
+                    handler_code="return json.dumps({'tables': ['users(id, name)', 'orders(id, user_id, amount)']})",
+                ),
+            ],
         ),
         MCPServerDefinition(
             server_name="weather-satellite-mcp",
@@ -350,11 +376,17 @@ def get_default_mcp_presets() -> List[MCPServerDefinition]:
                     description="Retrieves current temperature, humidity, and condition for a location.",
                     parameters=[
                         MCPToolParameter("city", "string", "Name of the target city"),
-                        MCPToolParameter("unit", "string", "Temperature unit: 'celsius' or 'fahrenheit'", required=False, default="celsius"),
+                        MCPToolParameter(
+                            "unit",
+                            "string",
+                            "Temperature unit: 'celsius' or 'fahrenheit'",
+                            required=False,
+                            default="celsius",
+                        ),
                     ],
-                    handler_code="return json.dumps({'city': city, 'temperature': 22.5, 'condition': 'Partly Cloudy', 'humidity': '62%'})"
+                    handler_code="return json.dumps({'city': city, 'temperature': 22.5, 'condition': 'Partly Cloudy', 'humidity': '62%'})",
                 )
-            ]
+            ],
         ),
         MCPServerDefinition(
             server_name="crypto-hash-engine",
@@ -366,8 +398,8 @@ def get_default_mcp_presets() -> List[MCPServerDefinition]:
                     parameters=[
                         MCPToolParameter("data", "string", "Data string to hash"),
                     ],
-                    handler_code="import hashlib\nreturn hashlib.sha256(data.encode('utf-8')).hexdigest()"
+                    handler_code="import hashlib\nreturn hashlib.sha256(data.encode('utf-8')).hexdigest()",
                 )
-            ]
-        )
+            ],
+        ),
     ]

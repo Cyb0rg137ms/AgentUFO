@@ -16,35 +16,41 @@ import shutil
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from functools import wraps
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from agent_core.permissions import WorkspacePolicy, PermissionDenied
+from typing import Any, Dict, List, Optional, Union
+
+from agent_core.permissions import PermissionDenied, WorkspacePolicy
 
 
 def _synchronized(method):
     """Serialize in-process access to shared lock state using a re-entrant mutex."""
+
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._mutex:
             return method(self, *args, **kwargs)
+
     return wrapper
 
 
 class PathLockConflictError(Exception):
     """Raised when a seat tries to write to a path locked by another seat."""
+
     pass
 
 
 class PathNotFoundError(Exception):
     """Raised when an operation targets a nonexistent path."""
+
     pass
 
 
 @dataclass
 class PathLock:
     """Represents an active lock on a specific file path."""
+
     path: str
     seat_id: str
     seat_role: str
@@ -83,8 +89,12 @@ class WorkspaceManager:
     durable lock state in .agentufo/locks.json, and atomic mutations.
     """
 
-    def __init__(self, workspace_root: Optional[Union[str, Path]] = None, root_dir: Optional[Union[str, Path]] = None,
-                 policy: Optional[WorkspacePolicy] = None) -> None:
+    def __init__(
+        self,
+        workspace_root: Optional[Union[str, Path]] = None,
+        root_dir: Optional[Union[str, Path]] = None,
+        policy: Optional[WorkspacePolicy] = None,
+    ) -> None:
         self._mutex = threading.RLock()
         self.root = Path(workspace_root or root_dir or os.getcwd()).resolve()
         if policy is not None and policy.root != self.root:
@@ -280,20 +290,29 @@ class WorkspaceManager:
             rel = self._normalize_rel_path(p_raw)
             existing = self.get_lock(rel)
             if existing and existing.seat_id != seat_id:
-                denied.append({
-                    "path": rel,
-                    "locked_by": existing.seat_id,
-                    "seat_role": existing.seat_role,
-                    "acquired_at": existing.acquired_at,
-                    "expires_in_seconds": round(max(0.0, (existing.acquired_at + existing.timeout_seconds) - time.time()), 1),
-                })
+                denied.append(
+                    {
+                        "path": rel,
+                        "locked_by": existing.seat_id,
+                        "seat_role": existing.seat_role,
+                        "acquired_at": existing.acquired_at,
+                        "expires_in_seconds": round(
+                            max(
+                                0.0, (existing.acquired_at + existing.timeout_seconds) - time.time()
+                            ),
+                            1,
+                        ),
+                    }
+                )
             else:
                 granted.append(rel)
 
         # Only acquire if all requested paths can be locked without conflict
         if not denied:
             for rel in granted:
-                self.acquire_lock(rel, seat_id=seat_id, seat_role=seat_role, lease_seconds=lease_seconds)
+                self.acquire_lock(
+                    rel, seat_id=seat_id, seat_role=seat_role, lease_seconds=lease_seconds
+                )
 
         return {
             "success": len(denied) == 0,
@@ -303,7 +322,9 @@ class WorkspaceManager:
         }
 
     @_synchronized
-    def break_lock(self, target_path: Union[str, Path], breaker_id: str = "master_admin", reason: str = "") -> bool:
+    def break_lock(
+        self, target_path: Union[str, Path], breaker_id: str = "master_admin", reason: str = ""
+    ) -> bool:
         """
         Force-breaks a stale or dead lock on disk with audit trail in .agentufo/lock_audit.json.
         """
@@ -321,14 +342,16 @@ class WorkspaceManager:
                     audit_entries = json.load(f)
             except Exception:
                 pass
-        audit_entries.append({
-            "action": "break_lock",
-            "path": rel_path,
-            "previous_owner": lock.seat_id,
-            "broken_by": breaker_id,
-            "reason": reason or "Administrative override / crash purge",
-            "timestamp": time.time(),
-        })
+        audit_entries.append(
+            {
+                "action": "break_lock",
+                "path": rel_path,
+                "previous_owner": lock.seat_id,
+                "broken_by": breaker_id,
+                "reason": reason or "Administrative override / crash purge",
+                "timestamp": time.time(),
+            }
+        )
         try:
             with open(audit_file, "w", encoding="utf-8") as f:
                 json.dump(audit_entries[-50:], f, indent=2)
@@ -377,7 +400,9 @@ class WorkspaceManager:
         rel_path = self._normalize_rel_path(target_path, operation="write")
         staged_path = self.staging_dir / seat_id / rel_path
         if not staged_path.exists():
-            raise PathNotFoundError(f"No staged changes found for '{rel_path}' by seat '{seat_id}'.")
+            raise PathNotFoundError(
+                f"No staged changes found for '{rel_path}' by seat '{seat_id}'."
+            )
 
         content = staged_path.read_text(encoding="utf-8", errors="replace")
         committed_path = self.write_file_atomic(rel_path, content, seat_id=seat_id)
@@ -411,6 +436,7 @@ class WorkspaceManager:
         Generates Git-style unified diff between existing workspace file and staged candidate.
         """
         import difflib
+
         rel_path = self._normalize_rel_path(target_path)
         full_path = self.root / rel_path
         original_lines = []
@@ -493,35 +519,49 @@ class WorkspaceManager:
     def get_workspace_tree(self, max_depth: int = 4) -> List[Dict[str, Any]]:
         """Returns hierarchical file tree with lock metadata."""
         tree = []
-        ignored = {".git", ".agentufo", "__pycache__", "node_modules", ".pytest_cache", ".venv", "venv"}
+        ignored = {
+            ".git",
+            ".agentufo",
+            "__pycache__",
+            "node_modules",
+            ".pytest_cache",
+            ".venv",
+            "venv",
+        }
 
         def scan_dir(dir_path: Path, current_depth: int) -> List[Dict[str, Any]]:
             if current_depth > max_depth:
                 return []
             items = []
             try:
-                for entry in sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+                for entry in sorted(
+                    dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())
+                ):
                     if entry.name in ignored:
                         continue
                     rel = self._normalize_rel_path(entry)
                     if entry.is_dir():
-                        items.append({
-                            "name": entry.name,
-                            "path": rel,
-                            "is_dir": True,
-                            "children": scan_dir(entry, current_depth + 1),
-                        })
+                        items.append(
+                            {
+                                "name": entry.name,
+                                "path": rel,
+                                "is_dir": True,
+                                "children": scan_dir(entry, current_depth + 1),
+                            }
+                        )
                     else:
                         lock = self.get_lock(rel)
-                        items.append({
-                            "name": entry.name,
-                            "path": rel,
-                            "is_dir": False,
-                            "size": entry.stat().st_size,
-                            "locked": lock is not None,
-                            "locked_by": lock.seat_id if lock else None,
-                            "locked_role": lock.seat_role if lock else None,
-                        })
+                        items.append(
+                            {
+                                "name": entry.name,
+                                "path": rel,
+                                "is_dir": False,
+                                "size": entry.stat().st_size,
+                                "locked": lock is not None,
+                                "locked_by": lock.seat_id if lock else None,
+                                "locked_role": lock.seat_role if lock else None,
+                            }
+                        )
             except Exception:
                 pass
             return items

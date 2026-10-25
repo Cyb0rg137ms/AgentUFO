@@ -8,7 +8,8 @@ Agents fail explicitly when no provider is configured; no simulated provider out
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
 from agent_core.llm.base import BaseLLMProvider
 
 
@@ -28,7 +29,9 @@ class BaseAgent:
     def generate_response(self, prompt: str, context: str = "") -> str:
         """Generates a text completion based on role and prompt."""
         if self.llm is None:
-            raise RuntimeError(f"Agent '{self.role}' has no configured LLM provider; refusing to fabricate a response.")
+            raise RuntimeError(
+                f"Agent '{self.role}' has no configured LLM provider; refusing to fabricate a response."
+            )
         resp = self.llm.generate(prompt, system_prompt=f"Role: {self.role}\nContext: {context}")
         return resp.content
 
@@ -57,11 +60,14 @@ class CoderAgent(BaseAgent):
             code = self.llm.extract_code_block(resp.content, "python")
             return code if code else resp.content.strip()
 
-        raise RuntimeError("CoderAgent has no configured LLM provider; no fallback code is generated.")
+        raise RuntimeError(
+            "CoderAgent has no configured LLM provider; no fallback code is generated."
+        )
 
 
 class TesterAgent(BaseAgent):
     """Responsible for generating test scripts to validate code."""
+
     __test__ = False
 
     def __init__(self, llm: Optional[BaseLLMProvider] = None) -> None:
@@ -82,7 +88,9 @@ class TesterAgent(BaseAgent):
                 return f"{code_to_test}\n\n{test_content}"
             return test_content
 
-        raise RuntimeError("TesterAgent has no configured LLM provider; no placeholder tests are generated.")
+        raise RuntimeError(
+            "TesterAgent has no configured LLM provider; no placeholder tests are generated."
+        )
 
 
 class ReviewerAgent(BaseAgent):
@@ -94,7 +102,9 @@ class ReviewerAgent(BaseAgent):
     def review_code(self, code: str) -> Dict[str, Any]:
         is_safe = "os.system" not in code and "eval(" not in code and "exec(" not in code
         if self.llm is None:
-            raise RuntimeError("ReviewerAgent has no configured LLM provider; a heuristic cannot approve code.")
+            raise RuntimeError(
+                "ReviewerAgent has no configured LLM provider; a heuristic cannot approve code."
+            )
         prompt = (
             f"Review this code for correctness, safety, edge cases, and maintainability:\n```python\n{code}\n```\n"
             "Return JSON with: approved (bool), security_check (passed/failed), style_score (float), findings (array)."
@@ -103,20 +113,27 @@ class ReviewerAgent(BaseAgent):
         try:
             raw = resp.content
             if "{" in raw and "}" in raw:
-                raw = raw[raw.find("{"):raw.rfind("}") + 1]
+                raw = raw[raw.find("{") : raw.rfind("}") + 1]
             data = json.loads(raw)
             return {
                 "approved": bool(data.get("approved", False)) and is_safe,
-                "security_check": "failed" if not is_safe else str(data.get("security_check", "not verified")),
-                "style_score": float(data["style_score"]) if isinstance(data.get("style_score"), (int, float)) else None,
+                "security_check": "failed"
+                if not is_safe
+                else str(data.get("security_check", "not verified")),
+                "style_score": float(data["style_score"])
+                if isinstance(data.get("style_score"), (int, float))
+                else None,
                 "findings": data.get("findings", []),
                 "review_parse_valid": True,
             }
         except (ValueError, TypeError, KeyError):
-            return {"approved": False, "security_check": "not verified", "style_score": None,
-                    "findings": ["Reviewer response was not valid structured JSON; fail-closed."],
-                    "review_parse_valid": False}
-
+            return {
+                "approved": False,
+                "security_check": "not verified",
+                "style_score": None,
+                "findings": ["Reviewer response was not valid structured JSON; fail-closed."],
+                "review_parse_valid": False,
+            }
 
 
 class PonderingAgent(BaseAgent):
@@ -127,6 +144,7 @@ class PonderingAgent(BaseAgent):
 
     def ponder(self, task: str) -> Dict[str, Any]:
         from agent_core.logos.pondering_engine import PonderingEngine
+
         engine = PonderingEngine()
         synthesis = engine.evaluate_multi_angle(task)
         return {
@@ -144,8 +162,8 @@ class LogosArchitectAgent(BaseAgent):
         super().__init__(role="LOGOS Chief Cognitive Architect", llm=llm)
 
     def plan_architecture(self, task: str) -> Dict[str, Any]:
-        from agent_core.logos.decomposition import MasterIndexDecomposer
         from agent_core.logos.convergence import DualFrameworkConvergenceEngine
+        from agent_core.logos.decomposition import MasterIndexDecomposer
         from agent_core.logos.nas_topology import NASTopologyEngine
 
         decomposer = MasterIndexDecomposer()

@@ -24,7 +24,6 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional
 
-
 CURATED_MODELS: List[Dict[str, Any]] = [
     {
         "tag": "gemma2:2b",
@@ -290,18 +289,21 @@ class OllamaAutoLauncher:
             if ":" not in it and f"{it}:latest" in installed_tags:
                 continue
             if not any(g["tag"] == it or it.startswith(g["tag"].split(":")[0]) for g in gallery):
-                gallery.insert(0, {
-                    "tag": it,
-                    "name": f"Local: {it}",
-                    "provider": "Installed",
-                    "size": "Local Storage",
-                    "vram": "Detected",
-                    "speed": "⚡ Local Ready",
-                    "description": f"Custom installed local model '{it}' ready for instant execution.",
-                    "badge": "Ready",
-                    "recommended": True,
-                    "installed": True,
-                })
+                gallery.insert(
+                    0,
+                    {
+                        "tag": it,
+                        "name": f"Local: {it}",
+                        "provider": "Installed",
+                        "size": "Local Storage",
+                        "vram": "Detected",
+                        "speed": "⚡ Local Ready",
+                        "description": f"Custom installed local model '{it}' ready for instant execution.",
+                        "badge": "Ready",
+                        "recommended": True,
+                        "installed": True,
+                    },
+                )
         return gallery
 
     def get_status(self) -> Dict[str, Any]:
@@ -376,7 +378,7 @@ class OllamaAutoLauncher:
                     if total and total > 0:
                         percent = round((completed / total) * 100, 1)
 
-                    is_done = (status == "success")
+                    is_done = status == "success"
 
                     yield {
                         "status": status,

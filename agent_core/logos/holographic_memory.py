@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 @dataclass
 class LayerChunk:
     """A multi-layer task chunk recorded during continuous LLM generation."""
+
     layer_index: int
     name: str
     prompt: str
@@ -46,6 +47,7 @@ class LayerChunk:
 @dataclass
 class HolographicMemoryRecord:
     """A memory trace projected onto the holographic boundary."""
+
     id: str
     content: str
     boundary_vector: List[complex]
@@ -55,6 +57,7 @@ class HolographicMemoryRecord:
 
 
 import threading
+
 
 class HolographicMemoryEngine:
     """
@@ -87,7 +90,9 @@ class HolographicMemoryEngine:
                 row.append(cmath.exp(1j * angle) / math.sqrt(self.d_qudit))
             self._qudit_projection_matrix.append(row)
 
-    def project_qudit_phase_state(self, phase_or_params: Union[float, List[float], str], thread_idx: int = 0) -> List[complex]:
+    def project_qudit_phase_state(
+        self, phase_or_params: Union[float, List[float], str], thread_idx: int = 0
+    ) -> List[complex]:
         """
         Maps parallel execution thread parameters onto a 10-state qudit Hilbert space (|0> ... |9>).
         Computes unitary time evolution under dynamic qudit Hamiltonian and projects onto boundary.
@@ -104,7 +109,7 @@ class HolographicMemoryEngine:
                 p = ((h + k * 137 + thread_idx * 31) % 1000 / 1000.0) * 2.0 * math.pi - math.pi
                 qudit_state[k] = cmath.exp(1j * p)
         else:
-            params = list(phase_or_params)[:self.d_qudit]
+            params = list(phase_or_params)[: self.d_qudit]
             for k, val in enumerate(params):
                 qudit_state[k] = cmath.exp(1j * float(val))
             for k in range(len(params), self.d_qudit):
@@ -118,7 +123,9 @@ class HolographicMemoryEngine:
         # Expand qudit state to boundary memory dimension via projection matrix P
         projected = [0.0 + 0.0j] * self.dimension
         for j in range(self.dimension):
-            s = sum(qudit_state[k] * self._qudit_projection_matrix[k][j] for k in range(self.d_qudit))
+            s = sum(
+                qudit_state[k] * self._qudit_projection_matrix[k][j] for k in range(self.d_qudit)
+            )
             projected[j] = s
 
         # Unit normalization
@@ -158,24 +165,33 @@ class HolographicMemoryEngine:
             vec = [x / norm for x in vec]
         return vec
 
-    def store(self, content: str, memory_id: Optional[str] = None, **metadata: Any) -> HolographicMemoryRecord:
+    def store(
+        self, content: str, memory_id: Optional[str] = None, **metadata: Any
+    ) -> HolographicMemoryRecord:
         """Store a trace with bounded retention; oldest traces are evicted when needed."""
         if not isinstance(content, str):
             raise TypeError("Memory content must be a string")
         phase_vec = self.encode_text_to_phase_vector(content)
         tokens = max(1, len(content) // 4)
         if tokens > self.max_token_capacity:
-            raise ValueError(f"Memory item exceeds the configured {self.max_token_capacity}-token capacity")
+            raise ValueError(
+                f"Memory item exceeds the configured {self.max_token_capacity}-token capacity"
+            )
 
         with self._lock:
             mid = memory_id or f"holo_{len(self._records) + 1}_{int(time.time() * 1000)}"
             # Replacing an ID must not double-count retained tokens.
-            existing_index = next((i for i, item in enumerate(self._records) if item.id == mid), None)
+            existing_index = next(
+                (i for i, item in enumerate(self._records) if item.id == mid), None
+            )
             if existing_index is not None:
                 old = self._records.pop(existing_index)
                 self.total_tokens_stored -= old.token_count
 
-            while self.total_tokens_stored + self._layer_tokens_stored + tokens > self.max_token_capacity:
+            while (
+                self.total_tokens_stored + self._layer_tokens_stored + tokens
+                > self.max_token_capacity
+            ):
                 if self._records:
                     removed = self._records.pop(0)
                     self.total_tokens_stored -= removed.token_count
@@ -229,7 +245,16 @@ class HolographicMemoryEngine:
             scored = [
                 (
                     r,
-                    max(0.0, float(sum(q.real * r.boundary_vector[i].real + q.imag * r.boundary_vector[i].imag for i, q in enumerate(query_vec))))
+                    max(
+                        0.0,
+                        float(
+                            sum(
+                                q.real * r.boundary_vector[i].real
+                                + q.imag * r.boundary_vector[i].imag
+                                for i, q in enumerate(query_vec)
+                            )
+                        ),
+                    ),
                 )
                 for r in records
             ]
@@ -307,7 +332,10 @@ class HolographicMemoryEngine:
             metadata=metadata,
         )
         with self._lock:
-            while self.total_tokens_stored + self._layer_tokens_stored + chunk_tokens + summary_tokens > self.max_token_capacity:
+            while (
+                self.total_tokens_stored + self._layer_tokens_stored + chunk_tokens + summary_tokens
+                > self.max_token_capacity
+            ):
                 if self._layer_chunks:
                     removed_chunk = self._layer_chunks.pop(0)
                     self._layer_tokens_stored -= removed_chunk.token_count
@@ -320,7 +348,11 @@ class HolographicMemoryEngine:
             self._layer_tokens_stored += chunk_tokens
 
         # This is a compact retrieval hint, not full-context preservation.
-        self.store(summary_text, memory_id=f"layer_{layer_index}_{int(time.time()*1000)}", category="layer_chunk")
+        self.store(
+            summary_text,
+            memory_id=f"layer_{layer_index}_{int(time.time() * 1000)}",
+            category="layer_chunk",
+        )
         return chunk
 
     def build_coherent_context_for_next_layer(
@@ -348,7 +380,7 @@ class HolographicMemoryEngine:
                 f"Invariants: {', '.join(chunk.invariants) if chunk.invariants else 'None recorded'}"
             )
             if len(section) > budget:
-                section = section[:max(0, budget - 20)] + "\n[section truncated to context budget]"
+                section = section[: max(0, budget - 20)] + "\n[section truncated to context budget]"
             if not section or budget <= 0:
                 break
             selected.append(section)

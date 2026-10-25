@@ -8,7 +8,6 @@ custom MCP Server Studio development, projects, artifacts, and persistent chats.
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -29,48 +28,36 @@ if _env_file.exists():
     except Exception:
         pass
 
-from agent_core.llm import (
-    LLMRegistry,
-    BaseLLMProvider,
-    OllamaProvider,
-)
-from server.starter_artifacts import get_starter_artifacts
-from agent_core.llm.ollama_launcher import OllamaAutoLauncher
-from agent_core.operator_interface import SandboxOperatorInterface, SandboxSessionReport, ProgressEvent
-from agent_core.logos import (
-    MasterIndexDecomposer,
-    PonderingEngine,
-    NASTopologyEngine,
-    FractalReasoningEngine,
-    HolographicMemoryEngine,
-)
-from agent_core.operator_interface import (
-    JevDecisionEngine,
-    JevDecisionReport,
-    TaskIntent,
-    CodeTargetType,
-)
-from agent_core.mcp_studio import (
-    MCPToolDefinition,
-    MCPToolParameter,
-    MCPResourceDefinition,
-    MCPServerDefinition,
-    MCPServerScaffolder,
-    MCPSandboxTester,
-    get_default_mcp_presets,
-)
-from agent_core.workspace_manager import WorkspaceManager
-from agent_core.review_gate import ReviewGate
-from agent_core.budget_guard import HardBudgetGuard
-from agent_core.capability_prober import EmpiricalCapabilityProber
 from agent_core.agentufo_swarm import (
     AgentUFOCoordinator,
     AgentUFOMode,
-    SeatTokenPolicy,
-    CrewSeat,
     BriefMessage,
-    AgentUFOExecutionReport,
+    SeatTokenPolicy,
 )
+from agent_core.budget_guard import HardBudgetGuard
+from agent_core.capability_prober import EmpiricalCapabilityProber
+from agent_core.llm import (
+    LLMRegistry,
+    OllamaProvider,
+)
+from agent_core.llm.ollama_launcher import OllamaAutoLauncher
+from agent_core.mcp_studio import (
+    MCPSandboxTester,
+    MCPServerDefinition,
+    MCPServerScaffolder,
+    MCPToolDefinition,
+    MCPToolParameter,
+    get_default_mcp_presets,
+)
+from agent_core.operator_interface import (
+    JevDecisionEngine,
+    ProgressEvent,
+    SandboxOperatorInterface,
+    TaskIntent,
+)
+from agent_core.review_gate import ReviewGate
+from agent_core.workspace_manager import WorkspaceManager
+from server.starter_artifacts import get_starter_artifacts
 
 
 def _update_env_file(env_path: Path, key: str, value: str) -> None:
@@ -112,7 +99,9 @@ class ChatSessionManager:
         self.jev_engine = JevDecisionEngine()
 
         # Ollama Auto-Launcher & Local AI Studio
-        self.ollama_launcher = OllamaAutoLauncher(host=self.custom_endpoint or "http://127.0.0.1:11434")
+        self.ollama_launcher = OllamaAutoLauncher(
+            host=self.custom_endpoint or "http://127.0.0.1:11434"
+        )
 
         # MCP Tester
         self.mcp_tester = MCPSandboxTester()
@@ -157,7 +146,9 @@ class ChatSessionManager:
         self.agentufo_policy = "all"
         self.agentufo_coordinator = AgentUFOCoordinator(
             cloud_llm=self.operator.llm,
-            local_llm=getattr(self.operator.hybrid_coordinator, "local_llm", None) if hasattr(self.operator, "hybrid_coordinator") else None,
+            local_llm=getattr(self.operator.hybrid_coordinator, "local_llm", None)
+            if hasattr(self.operator, "hybrid_coordinator")
+            else None,
             workspace=self.workspace_mgr,
             num_seats=self.agentufo_seats,
             mode=AgentUFOMode.CREW_PIPELINE,
@@ -193,7 +184,9 @@ class ChatSessionManager:
         if coordinator is None or operator is None:
             return
         coordinator.cloud_llm = operator.llm
-        coordinator.local_llm = getattr(getattr(operator, "hybrid_coordinator", None), "local_llm", None)
+        coordinator.local_llm = getattr(
+            getattr(operator, "hybrid_coordinator", None), "local_llm", None
+        )
 
     def _seed_starter_artifacts(self) -> None:
         """Seeds demo artifacts that showcase the sandbox capabilities."""
@@ -262,7 +255,9 @@ class ChatSessionManager:
             res["hybrid_tiering_enabled"] = status.get("enabled", self.enable_hybrid)
         return res
 
-    def configure_hybrid(self, settings: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, Any]:
+    def configure_hybrid(
+        self, settings: Optional[Dict[str, Any]] = None, **kwargs: Any
+    ) -> Dict[str, Any]:
         """Configures the Save Tokens (Hybrid Cloud + Local) feature."""
         cfg = dict(settings or {})
         cfg.update(kwargs)
@@ -284,7 +279,11 @@ class ChatSessionManager:
         """Returns AgentUFO crew status, active locks, budget, multi-LLM fleet, and prober cache."""
         active_locks = self.workspace_mgr.list_active_locks()
         budget_summary = self.budget_guard.get_summary()
-        probe_cache = self.capability_prober.get_cached_profiles() if hasattr(self.capability_prober, "get_cached_profiles") else self.capability_prober._profiles
+        probe_cache = (
+            self.capability_prober.get_cached_profiles()
+            if hasattr(self.capability_prober, "get_cached_profiles")
+            else self.capability_prober._profiles
+        )
         mailbox = [m.to_dict() for m in self.agentufo_coordinator.mailbox]
         seats = [s.to_dict() for s in self.agentufo_coordinator.seats]
         return {
@@ -307,7 +306,9 @@ class ChatSessionManager:
             "workspace_root": str(self.workspace_mgr.root),
         }
 
-    def configure_agentufo(self, settings: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, Any]:
+    def configure_agentufo(
+        self, settings: Optional[Dict[str, Any]] = None, **kwargs: Any
+    ) -> Dict[str, Any]:
         """Configures AgentUFO crew settings (mode, seats, policy, budget caps, multi-LLM fleet)."""
         cfg = dict(settings or {})
         cfg.update(kwargs)
@@ -315,7 +316,15 @@ class ChatSessionManager:
             m = cfg["mode"]
             if m in ("crew_pipeline", "split_work", "consensus", "competitive_consensus"):
                 self.agentufo_mode = m
-                mode_val = AgentUFOMode.SPLIT_WORK if m == "split_work" else (AgentUFOMode.COMPETITIVE_CONSENSUS if "consensus" in m else AgentUFOMode.CREW_PIPELINE)
+                mode_val = (
+                    AgentUFOMode.SPLIT_WORK
+                    if m == "split_work"
+                    else (
+                        AgentUFOMode.COMPETITIVE_CONSENSUS
+                        if "consensus" in m
+                        else AgentUFOMode.CREW_PIPELINE
+                    )
+                )
                 self.agentufo_coordinator.mode = mode_val
         if "num_seats" in cfg or "num_agents" in cfg or "swarm_agents" in cfg:
             n = cfg.get("num_seats") or cfg.get("num_agents") or cfg.get("swarm_agents")
@@ -333,9 +342,13 @@ class ChatSessionManager:
         if "budget" in cfg and isinstance(cfg["budget"], dict):
             b = cfg["budget"]
             if "total_spend_limit_usd" in b or "max_usd_cap" in b:
-                self.budget_guard.config.max_usd_cap = float(b.get("total_spend_limit_usd") or b.get("max_usd_cap"))
+                self.budget_guard.config.max_usd_cap = float(
+                    b.get("total_spend_limit_usd") or b.get("max_usd_cap")
+                )
             if "max_total_tokens" in b or "total_token_cap" in b:
-                self.budget_guard.config.total_token_cap = int(b.get("max_total_tokens") or b.get("total_token_cap"))
+                self.budget_guard.config.total_token_cap = int(
+                    b.get("max_total_tokens") or b.get("total_token_cap")
+                )
             if "per_seat_token_cap" in b:
                 self.budget_guard.config.per_seat_token_cap = int(b["per_seat_token_cap"])
             if "planner_token_cap" in b:
@@ -367,7 +380,9 @@ class ChatSessionManager:
         telemetry["budget"] = self.budget_guard.get_summary()
         return telemetry
 
-    def execute_seat_action(self, seat_id: str, action: str, context: Optional[str] = None) -> Dict[str, Any]:
+    def execute_seat_action(
+        self, seat_id: str, action: str, context: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Executes a live steering action (pause, resume, stop, edit/inject) on a seat."""
         success = False
         if action == "pause":
@@ -402,7 +417,9 @@ class ChatSessionManager:
             "workspace_root": str(self.workspace_mgr.root),
         }
 
-    def break_agentufo_lock(self, target_path: str, breaker_id: str = "master_admin", reason: str = "") -> Dict[str, Any]:
+    def break_agentufo_lock(
+        self, target_path: str, breaker_id: str = "master_admin", reason: str = ""
+    ) -> Dict[str, Any]:
         """Administrative override breaking a stale or crash-abandoned lock on disk."""
         success = self.workspace_mgr.break_lock(target_path, breaker_id=breaker_id, reason=reason)
         active_locks = self.workspace_mgr.list_active_locks()
@@ -413,9 +430,17 @@ class ChatSessionManager:
             "active_locks": [l.to_dict() for l in active_locks],
         }
 
-    def claim_agentufo_paths(self, seat_id: str, paths: List[str], seat_role: str = "builder", lease_seconds: float = 600.0) -> Dict[str, Any]:
+    def claim_agentufo_paths(
+        self,
+        seat_id: str,
+        paths: List[str],
+        seat_role: str = "builder",
+        lease_seconds: float = 600.0,
+    ) -> Dict[str, Any]:
         """Claims multiple paths for a seat with strict on-disk mutual exclusion."""
-        result = self.workspace_mgr.claim_paths(seat_id, paths, seat_role=seat_role, lease_seconds=lease_seconds)
+        result = self.workspace_mgr.claim_paths(
+            seat_id, paths, seat_role=seat_role, lease_seconds=lease_seconds
+        )
         return result
 
     def handoff_agentufo_brief(
@@ -497,13 +522,33 @@ class ChatSessionManager:
         return {
             "local_models": local_models,
             "presets": {
-                "ollama": local_models if local_models else ["qwen2.5-coder:7b", "deepseek-r1:14b", "llama3.2:3b"],
+                "ollama": local_models
+                if local_models
+                else ["qwen2.5-coder:7b", "deepseek-r1:14b", "llama3.2:3b"],
                 "openai": ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
-                "anthropic": ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"],
-                "claude": ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-opus-20240229"],
+                "anthropic": [
+                    "claude-3-7-sonnet-20250219",
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-opus-20240229",
+                ],
+                "claude": [
+                    "claude-3-7-sonnet-20250219",
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-opus-20240229",
+                ],
                 "grok": ["grok-2-latest", "grok-beta"],
-                "gemini": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash-lite"],
-                "deepseek": ["deepseek-chat", "deepseek-reasoner", "deepseek-flash", "deepseek-v4-pro"],
+                "gemini": [
+                    "gemini-2.0-flash",
+                    "gemini-1.5-pro",
+                    "gemini-1.5-flash",
+                    "gemini-2.0-flash-lite",
+                ],
+                "deepseek": [
+                    "deepseek-chat",
+                    "deepseek-reasoner",
+                    "deepseek-flash",
+                    "deepseek-v4-pro",
+                ],
                 "kimi": ["kimi-k2", "moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k"],
                 "minimax": ["MiniMax-Text-01", "abab6.5s-chat", "abab6.5-chat"],
                 "qwen": ["qwen-max", "qwen-plus", "qwen-turbo", "qwen2.5-coder-32b-instruct"],
@@ -515,7 +560,10 @@ class ChatSessionManager:
         """Dynamically switches providers, keys, and model parameters at runtime."""
         requested_provider = str(settings.get("provider") or self.provider_name).lower().strip()
         if requested_provider not in LLMRegistry._PROVIDERS:
-            return {"status": "error", "error": f"Unknown provider '{requested_provider}'. Choose from: {', '.join(sorted(LLMRegistry._PROVIDERS))}"}
+            return {
+                "status": "error",
+                "error": f"Unknown provider '{requested_provider}'. Choose from: {', '.join(sorted(LLMRegistry._PROVIDERS))}",
+            }
         if "provider" in settings and settings["provider"]:
             self.provider_name = requested_provider
         if "model" in settings and settings["model"]:
@@ -611,8 +659,21 @@ class ChatSessionManager:
             }
 
         # Step 2: Determine if Sandbox Execution or Conversational
-        is_explanation = p_clean.lower().startswith(("explain", "what is", "what are", "why", "describe", "overview", "tell me about")) and not any(
-            k in p_clean.lower() for k in ["write code", "implement", "def ", "class ", "write a", "write function", "build", "create", "make"]
+        is_explanation = p_clean.lower().startswith(
+            ("explain", "what is", "what are", "why", "describe", "overview", "tell me about")
+        ) and not any(
+            k in p_clean.lower()
+            for k in [
+                "write code",
+                "implement",
+                "def ",
+                "class ",
+                "write a",
+                "write function",
+                "build",
+                "create",
+                "make",
+            ]
         )
         if is_explanation:
             is_coding = False
@@ -623,9 +684,24 @@ class ChatSessionManager:
                 or any(
                     k in p_clean.lower()
                     for k in [
-                        "write", "code", "implement", "def ", "class ", "fix", "solve",
-                        "divide", "algorithm", "script", "program", "compile", "benchmark",
-                        "build", "create a", "make a", "develop", "design"
+                        "write",
+                        "code",
+                        "implement",
+                        "def ",
+                        "class ",
+                        "fix",
+                        "solve",
+                        "divide",
+                        "algorithm",
+                        "script",
+                        "program",
+                        "compile",
+                        "benchmark",
+                        "build",
+                        "create a",
+                        "make a",
+                        "develop",
+                        "design",
                     ]
                 )
             )
@@ -641,8 +717,8 @@ class ChatSessionManager:
             # Run through optimized sandbox operator interface
             try:
                 report = self.operator.solve_task(
-                    p_clean, 
-                    max_retries=self.max_retries, 
+                    p_clean,
+                    max_retries=self.max_retries,
                     progress_callback=progress_callback,
                     conversation_history=context,
                     enable_hybrid=hyb,
@@ -665,7 +741,7 @@ class ChatSessionManager:
                 "subquestions": [
                     f"Architecture & State for: '{p_clean[:60]}...'",
                     "Input boundaries and resource limits",
-                    "Runtime verification status and remaining risks"
+                    "Runtime verification status and remaining risks",
                 ],
                 "qualified_properties": report.qualified_properties,
                 "mera_summary": self.operator.fractal_mera.coarse_grain_summary(multiscale),
@@ -679,12 +755,17 @@ class ChatSessionManager:
                 "token_usage_complete": bool(getattr(report, "token_usage_complete", False)),
                 "verification_level": getattr(report, "verification_level", "not_verified"),
                 "implementation_plan": getattr(report, "implementation_plan", None),
-                "progress_log": [e.to_dict() if hasattr(e, "to_dict") else e for e in getattr(report, "progress_log", [])],
+                "progress_log": [
+                    e.to_dict() if hasattr(e, "to_dict") else e
+                    for e in getattr(report, "progress_log", [])
+                ],
                 "hybrid_telemetry": getattr(report, "hybrid_telemetry", None),
                 "swarm_report": getattr(report, "swarm_report", None),
             }
 
-            is_app = any(k in report.final_code.lower() for k in ["<html", "<canvas", "<!doctype html"])
+            is_app = any(
+                k in report.final_code.lower() for k in ["<html", "<canvas", "<!doctype html"]
+            )
             if is_app:
                 verification_note = (
                     "Static structure checks passed; this artifact was not executed in a real browser."
@@ -705,7 +786,9 @@ class ChatSessionManager:
                     test_summary = f"Sandbox test output:\n```\n{report.test_logs[:200]}\n```"
 
                 style_score = report.review.get("style_score")
-                style_text = f"{style_score}/10" if isinstance(style_score, (int, float)) else "Not measured"
+                style_text = (
+                    f"{style_score}/10" if isinstance(style_score, (int, float)) else "Not measured"
+                )
                 reply_text = (
                     f"Implementation result for **{p_clean}** using topology `{report.topology_used}`.\n\n"
                     f"{status_line}\n"
@@ -716,15 +799,17 @@ class ChatSessionManager:
 
             # Record artifact
             artifact_id = f"art-{uuid.uuid4().hex[:8]}"
-            self.artifacts.append({
-                "id": artifact_id,
-                "title": f"Artifact: {p_clean[:40]}",
-                "type": "html_app" if is_app else "python_script",
-                "language": "html" if is_app else "python",
-                "code": report.final_code,
-                "created_at": time.time(),
-                "status": report.status,
-            })
+            self.artifacts.append(
+                {
+                    "id": artifact_id,
+                    "title": f"Artifact: {p_clean[:40]}",
+                    "type": "html_app" if is_app else "python_script",
+                    "language": "html" if is_app else "python",
+                    "code": report.final_code,
+                    "created_at": time.time(),
+                    "status": report.status,
+                }
+            )
 
             result = {
                 "type": "code_execution",
@@ -743,7 +828,10 @@ class ChatSessionManager:
                 "token_usage_complete": bool(getattr(report, "token_usage_complete", False)),
                 "verification_level": getattr(report, "verification_level", "not_verified"),
                 "implementation_plan": getattr(report, "implementation_plan", None),
-                "progress_log": [e.to_dict() if hasattr(e, "to_dict") else e for e in getattr(report, "progress_log", [])],
+                "progress_log": [
+                    e.to_dict() if hasattr(e, "to_dict") else e
+                    for e in getattr(report, "progress_log", [])
+                ],
                 "hybrid_telemetry": getattr(report, "hybrid_telemetry", None),
                 "swarm_report": getattr(report, "swarm_report", None),
             }
@@ -754,10 +842,18 @@ class ChatSessionManager:
             # every ordinary chat turn and could also trigger web search for generic questions.
             # Deep analysis is opt-in by prompt; routine chat makes one bounded model call.
             lower_prompt = p_clean.lower()
-            deep_mode = any(marker in lower_prompt for marker in (
-                "analyze deeply", "deep reasoning", "multi-step proof", "formal proof",
-                "exhaustive analysis", "think through every case", "use logos"
-            ))
+            deep_mode = any(
+                marker in lower_prompt
+                for marker in (
+                    "analyze deeply",
+                    "deep reasoning",
+                    "multi-step proof",
+                    "formal proof",
+                    "exhaustive analysis",
+                    "think through every case",
+                    "use logos",
+                )
+            )
             pondering = topology = None
             subqs = []
             if deep_mode:
@@ -777,18 +873,33 @@ class ChatSessionManager:
                     chunk = f"User: {prompt_part}\nAssistant: {answer_part}\n---\n"
                     if len(chunk) > remaining:
                         break
-                    chunks.append(chunk); remaining -= len(chunk)
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
                 if chunks:
-                    context_str = "Conversation context (recent turns):\n" + "".join(reversed(chunks)) + "\n"
+                    context_str = (
+                        "Conversation context (recent turns):\n" + "".join(reversed(chunks)) + "\n"
+                    )
 
             # Only do a network search when the user explicitly requests fresh/current information.
             search_supplement = ""
             try:
-                explicit_search = any(w in lower_prompt for w in ("search the web", "search online", "latest news", "current price", "as of today", "look up current"))
+                explicit_search = any(
+                    w in lower_prompt
+                    for w in (
+                        "search the web",
+                        "search online",
+                        "latest news",
+                        "current price",
+                        "as of today",
+                        "look up current",
+                    )
+                )
                 if explicit_search:
                     s_res = self.operator.tools.execute("web_search", query=p_clean[:240])
                     if s_res.success and s_res.output:
-                        search_supplement = f"\nRelevant Knowledge / Real-time Context:\n{s_res.output[:1200]}\n"
+                        search_supplement = (
+                            f"\nRelevant Knowledge / Real-time Context:\n{s_res.output[:1200]}\n"
+                        )
             except Exception:
                 pass
 
@@ -823,17 +934,33 @@ class ChatSessionManager:
             # conversation history. Only opt-in deep analysis populates holographic memory.
             if deep_mode:
                 self.operator.holographic_mem.store(p_clean[:4000], category="user_query")
-                self.operator.holographic_mem.store(clean_content[:4000], category="assistant_reply")
+                self.operator.holographic_mem.store(
+                    clean_content[:4000], category="assistant_reply"
+                )
             thinking_data = {
                 "mode": "deep" if deep_mode else "fast",
                 "topology": topology.topology_type.value if topology else "direct_chat",
-                "summary": pondering.synthesis_summary if pondering else "Fast conversational path: one bounded model call; expensive analysis layers skipped.",
+                "summary": pondering.synthesis_summary
+                if pondering
+                else "Fast conversational path: one bounded model call; expensive analysis layers skipped.",
                 "subquestions": [sq.question for sq in subqs],
-                "qualified_properties": ([
-                    {"name": p.name, "confidence": round(p.confidence, 4), "hypothesis": p.hypothesis}
-                    for p in pondering.qualified_properties
-                ] if pondering else []),
-                "holographic_stats": (self.operator.holographic_mem.get_boundary_compression_stats() if deep_mode else None),
+                "qualified_properties": (
+                    [
+                        {
+                            "name": p.name,
+                            "confidence": round(p.confidence, 4),
+                            "hypothesis": p.hypothesis,
+                        }
+                        for p in pondering.qualified_properties
+                    ]
+                    if pondering
+                    else []
+                ),
+                "holographic_stats": (
+                    self.operator.holographic_mem.get_boundary_compression_stats()
+                    if deep_mode
+                    else None
+                ),
                 "effective_tokens": int(getattr(llm_resp, "total_tokens", 0) or 0),
                 "total_tokens_used": int(getattr(llm_resp, "total_tokens", 0) or 0),
                 "token_usage_complete": False,
@@ -870,14 +997,25 @@ class ChatSessionManager:
         # Detailed traces belong in the run/artifact record, not every future chat prompt.
         if isinstance(compact.get("thinking"), dict):
             thinking = compact["thinking"]
-            compact["thinking"] = {k: thinking[k] for k in ("mode", "topology", "summary", "effective_tokens", "total_tokens_used", "token_usage_complete") if k in thinking}
+            compact["thinking"] = {
+                k: thinking[k]
+                for k in (
+                    "mode",
+                    "topology",
+                    "summary",
+                    "effective_tokens",
+                    "total_tokens_used",
+                    "token_usage_complete",
+                )
+                if k in thinking
+            }
         self.history.append({"prompt": str(prompt)[:3000], "result": compact})
         if len(self.history) > 60:
             del self.history[:-60]
 
     def _build_context(self, max_turns: int) -> List[Dict[str, Any]]:
         """Extract recent conversation history for context."""
-        return self.history[-max(1, min(8, max_turns)):] if self.history else []
+        return self.history[-max(1, min(8, max_turns)) :] if self.history else []
 
     def _auto_save_chat(self) -> None:
         """Automatically saves the current session."""
@@ -885,10 +1023,10 @@ class ChatSessionManager:
             return
         if not self.current_chat_id:
             self.current_chat_id = f"chat-{uuid.uuid4().hex[:8]}"
-        
+
         first_prompt = self.history[0].get("prompt", "Untitled Session")
         title = (first_prompt[:40] + "...") if len(first_prompt) > 40 else first_prompt
-        
+
         self.saved_chats[self.current_chat_id] = {
             "id": self.current_chat_id,
             "title": title,
@@ -947,19 +1085,23 @@ class ChatSessionManager:
         for t in tools_data:
             params: List[MCPToolParameter] = []
             for p in t.get("parameters", []):
-                params.append(MCPToolParameter(
-                    name=p.get("name", "arg"),
-                    param_type=p.get("param_type", "string"),
-                    description=p.get("description", ""),
-                    required=p.get("required", True),
-                    default=p.get("default", None),
-                ))
-            tools.append(MCPToolDefinition(
-                name=t.get("name", "my_tool"),
-                description=t.get("description", "A custom MCP tool"),
-                parameters=params,
-                handler_code=t.get("handler_code", ""),
-            ))
+                params.append(
+                    MCPToolParameter(
+                        name=p.get("name", "arg"),
+                        param_type=p.get("param_type", "string"),
+                        description=p.get("description", ""),
+                        required=p.get("required", True),
+                        default=p.get("default", None),
+                    )
+                )
+            tools.append(
+                MCPToolDefinition(
+                    name=t.get("name", "my_tool"),
+                    description=t.get("description", "A custom MCP tool"),
+                    parameters=params,
+                    handler_code=t.get("handler_code", ""),
+                )
+            )
 
         sdef = MCPServerDefinition(
             server_name=sname,
@@ -969,18 +1111,22 @@ class ChatSessionManager:
 
         py_code = MCPServerScaffolder.generate_python_server(sdef)
         mcp_script_path = str((self.workspace_mgr.root / "agentufo_mcp" / "server.py").resolve())
-        cfg_json = MCPServerScaffolder.generate_claude_desktop_config(sdef, script_path=mcp_script_path)
+        cfg_json = MCPServerScaffolder.generate_claude_desktop_config(
+            sdef, script_path=mcp_script_path
+        )
 
         # Store as artifact
-        self.artifacts.append({
-            "id": f"art-mcp-{sname}",
-            "title": f"MCP Server: {sname}",
-            "type": "mcp_server",
-            "language": "python",
-            "code": py_code,
-            "created_at": time.time(),
-            "status": "ready",
-        })
+        self.artifacts.append(
+            {
+                "id": f"art-mcp-{sname}",
+                "title": f"MCP Server: {sname}",
+                "type": "mcp_server",
+                "language": "python",
+                "code": py_code,
+                "created_at": time.time(),
+                "status": "ready",
+            }
+        )
 
         return {
             "status": "success",
@@ -996,12 +1142,14 @@ class ChatSessionManager:
 
         params: List[MCPToolParameter] = []
         for p in tool_data.get("parameters", []):
-            params.append(MCPToolParameter(
-                name=p.get("name", "arg"),
-                param_type=p.get("param_type", "string"),
-                description=p.get("description", ""),
-                required=p.get("required", True),
-            ))
+            params.append(
+                MCPToolParameter(
+                    name=p.get("name", "arg"),
+                    param_type=p.get("param_type", "string"),
+                    description=p.get("description", ""),
+                    required=p.get("required", True),
+                )
+            )
 
         tool = MCPToolDefinition(
             name=tool_data.get("name", "test_tool"),
@@ -1046,12 +1194,14 @@ class ChatSessionManager:
         """Returns list of recent chats metadata."""
         items = []
         for cid, cdata in self.saved_chats.items():
-            items.append({
-                "id": cid,
-                "title": cdata.get("title", "Untitled Chat"),
-                "updated_at": cdata.get("updated_at", time.time()),
-                "turn_count": len(cdata.get("turns", [])),
-            })
+            items.append(
+                {
+                    "id": cid,
+                    "title": cdata.get("title", "Untitled Chat"),
+                    "updated_at": cdata.get("updated_at", time.time()),
+                    "turn_count": len(cdata.get("turns", [])),
+                }
+            )
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return items
 
@@ -1062,7 +1212,9 @@ class ChatSessionManager:
     def save_chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Saves or updates a chat session."""
         chat_id = payload.get("id") or f"chat-{uuid.uuid4().hex[:8]}"
-        title = payload.get("title") or (self.history[0]["prompt"][:35] if self.history else "New Chat")
+        title = payload.get("title") or (
+            self.history[0]["prompt"][:35] if self.history else "New Chat"
+        )
         turns = payload.get("turns") or self.history
 
         self.saved_chats[chat_id] = {
@@ -1102,6 +1254,7 @@ class ChatSessionManager:
         Returns provider info, response time, and detailed status.
         """
         import time as _time
+
         t0 = _time.perf_counter()
 
         provider = self.operator.llm.provider_name
@@ -1128,7 +1281,11 @@ class ChatSessionManager:
         except Exception as e:
             latency_ms = round((_time.perf_counter() - t0) * 1000, 1)
             err_str = str(e)
-            if "401" in err_str or "Unauthorized" in err_str or "invalid_api_key" in err_str.lower():
+            if (
+                "401" in err_str
+                or "Unauthorized" in err_str
+                or "invalid_api_key" in err_str.lower()
+            ):
                 msg = f"❌ Invalid API Key for {provider.upper()}. Check your key in Settings."
             elif "timeout" in err_str.lower() or "Connection" in err_str:
                 msg = f"❌ Cannot reach {provider.upper()} server. Check your endpoint or internet connection."
@@ -1217,9 +1374,7 @@ class ChatSessionManager:
         self.provider_name = "ollama"
         self.model_name = model_tag
 
-        kwargs: Dict[str, Any] = {
-            "host": self.custom_endpoint or "http://127.0.0.1:11434"
-        }
+        kwargs: Dict[str, Any] = {"host": self.custom_endpoint or "http://127.0.0.1:11434"}
 
         self.operator = SandboxOperatorInterface(
             provider_name=self.provider_name,
@@ -1269,14 +1424,22 @@ class ChatSessionManager:
             "tree": tree,
         }
 
-    def get_project_tree(self, root_dir: Optional[str] = None, max_depth: int = 4) -> Dict[str, Any]:
+    def get_project_tree(
+        self, root_dir: Optional[str] = None, max_depth: int = 4
+    ) -> Dict[str, Any]:
         """Builds a recursive tree of the project folder for the right split pane explorer."""
         active_root = Path(getattr(self, "project_root", Path(os.getcwd()).resolve())).resolve()
         base_path = Path(root_dir).resolve() if root_dir else active_root
         if not base_path.is_relative_to(active_root):
-            return {"status": "error", "error": "Requested directory is outside the active project workspace"}
+            return {
+                "status": "error",
+                "error": "Requested directory is outside the active project workspace",
+            }
         if not base_path.exists() or not base_path.is_dir():
-            return {"status": "error", "error": "Project directory does not exist or is not a directory"}
+            return {
+                "status": "error",
+                "error": "Project directory does not exist or is not a directory",
+            }
 
         def build_node(p: Path, depth: int) -> Dict[str, Any]:
             node: Dict[str, Any] = {
@@ -1291,9 +1454,17 @@ class ChatSessionManager:
                     return node
                 children = []
                 try:
-                    for child in sorted(p.iterdir(), key=lambda c: (not c.is_dir(), c.name.lower())):
+                    for child in sorted(
+                        p.iterdir(), key=lambda c: (not c.is_dir(), c.name.lower())
+                    ):
                         # Skip hidden/cache items
-                        if child.name.startswith(".") or child.name in ("node_modules", "__pycache__", "venv", ".git", ".venv"):
+                        if child.name.startswith(".") or child.name in (
+                            "node_modules",
+                            "__pycache__",
+                            "venv",
+                            ".git",
+                            ".venv",
+                        ):
                             continue
                         children.append(build_node(child, depth + 1))
                 except PermissionError:
@@ -1337,7 +1508,11 @@ class ChatSessionManager:
             return {
                 "status": "success",
                 "path": str(p),
-                "rel_path": str(p.relative_to(getattr(self, "project_root", Path(os.getcwd()).resolve())) if getattr(self, "project_root", None) and p.is_relative_to(self.project_root) else p.name).replace("\\", "/"),
+                "rel_path": str(
+                    p.relative_to(getattr(self, "project_root", Path(os.getcwd()).resolve()))
+                    if getattr(self, "project_root", None) and p.is_relative_to(self.project_root)
+                    else p.name
+                ).replace("\\", "/"),
                 "name": p.name,
                 "ext": p.suffix.lower(),
                 "content": content,
@@ -1363,13 +1538,18 @@ class ChatSessionManager:
                 raise ValueError("Path is outside the active project workspace")
             workspace_mgr = getattr(self, "workspace_mgr", None)
             if workspace_mgr is not None and Path(workspace_mgr.root).resolve() == base:
-                workspace_mgr.write_file_atomic(p.relative_to(base), content, seat_id="master_admin")
+                workspace_mgr.write_file_atomic(
+                    p.relative_to(base), content, seat_id="master_admin"
+                )
             else:
                 # Safe fallback for isolated tests/tools that construct the manager without __init__.
                 import tempfile
+
                 temp_name = None
                 try:
-                    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=p.parent, delete=False) as temp_file:
+                    with tempfile.NamedTemporaryFile(
+                        "w", encoding="utf-8", dir=p.parent, delete=False
+                    ) as temp_file:
                         temp_name = temp_file.name
                         temp_file.write(content)
                         temp_file.flush()
@@ -1399,8 +1579,12 @@ class ChatSessionManager:
         """
         key = raw_key.strip()
         if not key:
-            return {"status": "unknown", "detected": False, "provider": None,
-                    "message": "No API key provided."}
+            return {
+                "status": "unknown",
+                "detected": False,
+                "provider": None,
+                "message": "No API key provided.",
+            }
 
         # Generic detection: pattern + online probe
         detection = LLMRegistry.generic_detect_provider_and_model(key, probe_online=True)
@@ -1450,9 +1634,8 @@ class ChatSessionManager:
             "model": default_model,
             "models": detection.get("models", []),
             "env_var": env_var,
-            "message": detection.get("message", f"Auto-detected {provider.upper()}! Active model: {default_model}."),
+            "message": detection.get(
+                "message", f"Auto-detected {provider.upper()}! Active model: {default_model}."
+            ),
             "runtime": self.get_status(),
         }
-
-
-

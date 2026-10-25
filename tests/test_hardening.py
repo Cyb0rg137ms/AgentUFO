@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import importlib.util
+import json
 import tempfile
 import threading
 import unittest
@@ -11,11 +11,15 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from agent_core.llm.base import UnavailableLLMProvider
-from agent_core.operator_interface import SandboxOperatorInterface
-from agent_core.logos.pondering_engine import PonderingEngine
-from agent_core.logos.qdit_accelerator import ExactClassicalVerifier, QditSearchAccelerator, QditTensorEngine
-from agent_core.logos.recursive_auditor import RigorousAuditor
 from agent_core.logos.holographic_memory import HolographicMemoryEngine
+from agent_core.logos.pondering_engine import PonderingEngine
+from agent_core.logos.qdit_accelerator import (
+    ExactClassicalVerifier,
+    QditSearchAccelerator,
+    QditTensorEngine,
+)
+from agent_core.logos.recursive_auditor import RigorousAuditor
+from agent_core.operator_interface import SandboxOperatorInterface
 from agent_core.workspace_manager import WorkspaceManager
 from server.handlers import ChatSessionManager
 from server.web_server import AgentIDERequestHandler
@@ -23,7 +27,8 @@ from server.web_server import AgentIDERequestHandler
 
 class BudgetGuardTests(unittest.TestCase):
     def test_zero_dollar_cap_allows_local_but_blocks_cloud_before_call(self) -> None:
-        from agent_core.budget_guard import BudgetConfig, BudgetCapExceededError, HardBudgetGuard
+        from agent_core.budget_guard import BudgetCapExceededError, BudgetConfig, HardBudgetGuard
+
         guard = HardBudgetGuard(BudgetConfig(max_usd_cap=0.0))
         guard.check_headroom("local-seat", estimated_tokens=100, is_local_tier=True)
         with self.assertRaises(BudgetCapExceededError):
@@ -40,18 +45,29 @@ class ProviderFallbackTests(unittest.TestCase):
 
     def test_review_gate_project_tests_use_candidate_overlay_not_live_file(self) -> None:
         from agent_core.review_gate import ReviewGate
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "tests").mkdir()
             (root / "module.py").write_text("def value(): return 1\n", encoding="utf-8")
-            (root / "tests" / "test_module.py").write_text("from module import value\ndef test_value(): assert value() == 2\n", encoding="utf-8")
+            (root / "tests" / "test_module.py").write_text(
+                "from module import value\ndef test_value(): assert value() == 2\n",
+                encoding="utf-8",
+            )
             from agent_core.sandbox import CodeExecutionSandbox
+
             gate = ReviewGate(sandbox=CodeExecutionSandbox(timeout_seconds=1.0, mode="host"))
-            passed, output = gate.run_project_tests(root, "module.py", candidate_content="def value(): return 2\n")
+            passed, output = gate.run_project_tests(
+                root, "module.py", candidate_content="def value(): return 2\n"
+            )
             self.assertTrue(passed, output)
-            failed, output = gate.run_project_tests(root, "module.py", candidate_content="def value(): return 1\n")
+            failed, output = gate.run_project_tests(
+                root, "module.py", candidate_content="def value(): return 1\n"
+            )
             self.assertFalse(failed, output)
-            self.assertEqual((root / "module.py").read_text(encoding="utf-8"), "def value(): return 1\n")
+            self.assertEqual(
+                (root / "module.py").read_text(encoding="utf-8"), "def value(): return 1\n"
+            )
 
     def test_syntax_check_does_not_fabricate_confidence(self) -> None:
         operator = SandboxOperatorInterface(llm=UnavailableLLMProvider())
@@ -98,6 +114,7 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             barrier = threading.Barrier(8)
             outcomes = []
             outcome_lock = threading.Lock()
+
             def claim(i: int) -> None:
                 barrier.wait()
                 try:
@@ -107,9 +124,12 @@ class WorkspaceBoundaryTests(unittest.TestCase):
                     result = "conflict"
                 with outcome_lock:
                     outcomes.append(result)
+
             workers = [threading.Thread(target=claim, args=(i,)) for i in range(8)]
-            for worker in workers: worker.start()
-            for worker in workers: worker.join(timeout=3)
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=3)
             self.assertEqual(outcomes.count("acquired"), 1)
             self.assertEqual(outcomes.count("conflict"), 7)
 
@@ -152,8 +172,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
 class ReasoningIntegrityTests(unittest.TestCase):
     def test_artifact_preview_does_not_grant_same_origin(self) -> None:
         app = (Path(__file__).parents[1] / "web" / "js" / "app.js").read_text(encoding="utf-8")
-        self.assertNotIn('allow-same-origin', app)
-        self.assertNotIn('<iframe', app)
+        self.assertNotIn("allow-same-origin", app)
+        self.assertNotIn("<iframe", app)
 
     def test_pondering_uses_95_percent_heuristic_threshold_without_fake_pruning(self) -> None:
         engine = PonderingEngine()
@@ -173,7 +193,9 @@ class ReasoningIntegrityTests(unittest.TestCase):
     def test_fidelity_normalizes_vectors_and_rejects_shape_mismatch(self) -> None:
         fidelity = ExactClassicalVerifier.verify_reconstruction_fidelity([2, 0], [4, 0])
         self.assertAlmostEqual(fidelity, 1.0)
-        self.assertAlmostEqual(ExactClassicalVerifier.verify_reconstruction_fidelity([1, 0], [0, 1]), 0.0)
+        self.assertAlmostEqual(
+            ExactClassicalVerifier.verify_reconstruction_fidelity([1, 0], [0, 1]), 0.0
+        )
         with self.assertRaises(ValueError):
             ExactClassicalVerifier.verify_reconstruction_fidelity([1, 2], [1])
 
@@ -196,7 +218,9 @@ class ReasoningIntegrityTests(unittest.TestCase):
         self.assertEqual(state.verifier_status, "CLASSICAL_RANKING_UNVERIFIED")
         self.assertFalse(state.certificate["mps_state_used_for_ranking"])
 
-    @unittest.skipIf(importlib.util.find_spec("numpy") is None, "optional Qdit tensor engine requires NumPy")
+    @unittest.skipIf(
+        importlib.util.find_spec("numpy") is None, "optional Qdit tensor engine requires NumPy"
+    )
     def test_qdit_refuses_unvalidated_residual_reconstruction(self) -> None:
         engine = QditTensorEngine(n_qdits=2, d_physical=2, initial_bond_dim=1, max_bond_dim=1)
         engine.neural_cache.discarded_bonds[0] = {
@@ -217,7 +241,9 @@ class ReasoningIntegrityTests(unittest.TestCase):
         self.assertNotIn("first", [record.id for record in memory._records])
         context_memory = HolographicMemoryEngine(dimension=16, max_token_capacity=2000)
         context_memory.store_layer_chunk(1, "long", prompt="p" * 500, response="r" * 1000)
-        context = context_memory.build_coherent_context_for_next_layer(current_layer_index=2, max_context_chars=512)
+        context = context_memory.build_coherent_context_for_next_layer(
+            current_layer_index=2, max_context_chars=512
+        )
         self.assertLessEqual(len(context), 512)
 
 
@@ -272,15 +298,18 @@ class HttpContractTests(unittest.TestCase):
     def test_large_request_body_returns_413(self) -> None:
         # Send only headers: the server must reject from Content-Length before reading body bytes.
         import socket
+
         sock = socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=5)
         try:
-            sock.sendall((
-                "POST /api/chat HTTP/1.1\r\n"
-                f"Host: 127.0.0.1:{self.httpd.server_address[1]}\r\n"
-                "Content-Type: application/json\r\n"
-                f"Content-Length: {10 * 1024 * 1024 + 1}\r\n"
-                "Connection: close\r\n\r\n"
-            ).encode("ascii"))
+            sock.sendall(
+                (
+                    "POST /api/chat HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{self.httpd.server_address[1]}\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {10 * 1024 * 1024 + 1}\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode("ascii")
+            )
             response = sock.recv(4096).decode("latin-1")
             self.assertIn("413", response.split("\r\n", 1)[0])
         finally:

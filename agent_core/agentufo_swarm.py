@@ -16,41 +16,44 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import time
 import uuid
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from agent_core.budget_guard import (
+    BudgetCapExceededError,
+    HardBudgetGuard,
+)
+from agent_core.capability_prober import EmpiricalCapabilityProber
 from agent_core.llm.base import BaseLLMProvider, LLMResponse
 from agent_core.llm.registry import LLMRegistry
-from agent_core.sandbox import CodeExecutionSandbox
-from agent_core.workspace_manager import WorkspaceManager, PathLockConflictError
-from agent_core.review_gate import ReviewGate, ReviewGateReport, ReviewGateRejectedError
-from agent_core.budget_guard import HardBudgetGuard, BudgetConfig, BudgetCapExceededError, LocalRuntimeUnavailableError
-from agent_core.capability_prober import EmpiricalCapabilityProber
+from agent_core.review_gate import ReviewGate, ReviewGateReport
+from agent_core.workspace_manager import PathLockConflictError, WorkspaceManager
 
 
 class AgentUFOMode(str, Enum):
-    CREW_PIPELINE = "crew_pipeline"      # Architect -> Builder -> Reviewer Gate
-    SPLIT_WORK = "split_work"            # Antichain DAG partitioned parallel seats
+    CREW_PIPELINE = "crew_pipeline"  # Architect -> Builder -> Reviewer Gate
+    SPLIT_WORK = "split_work"  # Antichain DAG partitioned parallel seats
     COMPETITIVE_CONSENSUS = "consensus"  # Tournament with sandbox test ranking
 
 
 class SeatTokenPolicy(str, Enum):
     ALL = "all"
-    ALL_TIERED = "all"                   # All seats use hybrid local tiering where possible
+    ALL_TIERED = "all"  # All seats use hybrid local tiering where possible
     LEADER_ONLY = "leader_only"
-    LEADER_ONLY_CLOUD = "leader_only"    # Leader/Architect uses Cloud API; Builders use local models
-    CLOUD_ONLY = "cloud_only"            # Pure Frontier Cloud API across all seats
+    LEADER_ONLY_CLOUD = "leader_only"  # Leader/Architect uses Cloud API; Builders use local models
+    CLOUD_ONLY = "cloud_only"  # Pure Frontier Cloud API across all seats
 
 
 @dataclass
 class CrewSeat:
     """Represents an active seat in the AgentUFO crew with multi-LLM assignment & live control."""
+
     seat_id: str
     role_name: str
     description: str
@@ -116,6 +119,7 @@ class CrewSeat:
 @dataclass
 class BriefMessage:
     """Inter-seat mailbox message."""
+
     message_id: str
     from_seat: str
     to_seat: str
@@ -151,6 +155,7 @@ class BriefMessage:
 @dataclass
 class AgentUFOExecutionReport:
     """Comprehensive final report of AgentUFO crew execution."""
+
     task: str
     mode: str
     status: str  # "success", "rejected", "budget_exceeded", "error"
@@ -232,20 +237,50 @@ class AgentUFOCoordinator:
     def _init_crew_seats(self) -> None:
         """Initializes specialized crew seats."""
         base_roles = [
-            ("seat_1_architect", "Architect & Planner", "Decomposes requests, defines system blueprints, assigns paths, and writes specs."),
-            ("seat_2_builder", "Builder & Implementer", "Writes code to disk, validates syntax, and constructs tests."),
-            ("seat_3_reviewer", "Reviewer & Gatekeeper", "Runs sandbox test suite with veto and rejection authority."),
-            ("seat_4_refactorer", "Refactorer & Optimizer", "Performs AST minimization and runtime speed tuning."),
-            ("seat_5_security", "Security Auditor", "Verifies zero arbitrary subprocess execution or bytecode leaks."),
+            (
+                "seat_1_architect",
+                "Architect & Planner",
+                "Decomposes requests, defines system blueprints, assigns paths, and writes specs.",
+            ),
+            (
+                "seat_2_builder",
+                "Builder & Implementer",
+                "Writes code to disk, validates syntax, and constructs tests.",
+            ),
+            (
+                "seat_3_reviewer",
+                "Reviewer & Gatekeeper",
+                "Runs sandbox test suite with veto and rejection authority.",
+            ),
+            (
+                "seat_4_refactorer",
+                "Refactorer & Optimizer",
+                "Performs AST minimization and runtime speed tuning.",
+            ),
+            (
+                "seat_5_security",
+                "Security Auditor",
+                "Verifies zero arbitrary subprocess execution or bytecode leaks.",
+            ),
         ]
         self.seats = []
         for i in range(self.num_seats):
-            preset = base_roles[i] if i < len(base_roles) else (f"seat_{i+1}_worker", f"Specialized Worker {i+1}", "Executes decomposed subtasks.")
-            self.seats.append(CrewSeat(
-                seat_id=preset[0],
-                role_name=preset[1],
-                description=preset[2],
-            ))
+            preset = (
+                base_roles[i]
+                if i < len(base_roles)
+                else (
+                    f"seat_{i + 1}_worker",
+                    f"Specialized Worker {i + 1}",
+                    "Executes decomposed subtasks.",
+                )
+            )
+            self.seats.append(
+                CrewSeat(
+                    seat_id=preset[0],
+                    role_name=preset[1],
+                    description=preset[2],
+                )
+            )
 
     def _load_durable_state(self) -> None:
         """Loads mailbox and crew state from disk to survive page refresh."""
@@ -280,13 +315,17 @@ class AgentUFOCoordinator:
         # 2. Save seats state
         s_temp = self.state_file.with_suffix(".tmp")
         with open(s_temp, "w", encoding="utf-8") as f:
-            json.dump({
-                "seats": [s.to_dict() for s in self.seats],
-                "updated_at": time.time(),
-                "mode": self.mode.value,
-                "token_policy": self.token_policy.value,
-                "seat_models": getattr(self, "seat_models", {}),
-            }, f, indent=2)
+            json.dump(
+                {
+                    "seats": [s.to_dict() for s in self.seats],
+                    "updated_at": time.time(),
+                    "mode": self.mode.value,
+                    "token_policy": self.token_policy.value,
+                    "seat_models": getattr(self, "seat_models", {}),
+                },
+                f,
+                indent=2,
+            )
         shutil.move(str(s_temp), str(self.state_file))
 
     def pause_seat(self, seat_id: str) -> bool:
@@ -325,7 +364,11 @@ class AgentUFOCoordinator:
             if s.seat_id == seat_id:
                 prior = (s.injected_context or "").strip()
                 incoming = str(context or "").strip()
-                combined = (prior + "\n\n--- newer shared update ---\n" + incoming).strip() if prior else incoming
+                combined = (
+                    (prior + "\n\n--- newer shared update ---\n" + incoming).strip()
+                    if prior
+                    else incoming
+                )
                 s.injected_context = combined[-12000:]
                 msg = BriefMessage(
                     message_id=f"msg_{uuid.uuid4().hex[:8]}",
@@ -354,7 +397,9 @@ class AgentUFOCoordinator:
             "locks": [l.to_dict() for l in self.workspace.list_active_locks()],
         }
 
-    def post_message(self, from_seat: str, to_seat: str, msg_type: str, title: str, payload: Dict[str, Any]) -> BriefMessage:
+    def post_message(
+        self, from_seat: str, to_seat: str, msg_type: str, title: str, payload: Dict[str, Any]
+    ) -> BriefMessage:
         """Appends an inter-seat brief message and persists state."""
         msg = BriefMessage(
             message_id=f"msg_{uuid.uuid4().hex[:8]}",
@@ -372,7 +417,9 @@ class AgentUFOCoordinator:
     def get_mailbox_for_seat(self, seat_id: str) -> List[BriefMessage]:
         return [m for m in self.mailbox if m.to_seat == seat_id or m.to_seat == "all"]
 
-    def _resolve_llm_and_tier(self, seat_index: int, seat_id: str, is_planner: bool = False) -> Tuple[BaseLLMProvider, str]:
+    def _resolve_llm_and_tier(
+        self, seat_index: int, seat_id: str, is_planner: bool = False
+    ) -> Tuple[BaseLLMProvider, str]:
         """
         Resolves model provider for a seat, checking veto authority and preventing silent fallback.
         """
@@ -384,13 +431,19 @@ class AgentUFOCoordinator:
             try:
                 provider = LLMRegistry.get_provider(provider_name, model_name)
             except Exception as exc:
-                raise RuntimeError(f"Explicit model assignment {provider_name}/{model_name} for {seat_id} could not be initialized: {exc}") from exc
+                raise RuntimeError(
+                    f"Explicit model assignment {provider_name}/{model_name} for {seat_id} could not be initialized: {exc}"
+                ) from exc
             if not provider.is_available():
-                raise RuntimeError(f"Explicit model assignment {provider_name}/{model_name} for {seat_id} is unavailable. No silent fallback was attempted.")
+                raise RuntimeError(
+                    f"Explicit model assignment {provider_name}/{model_name} for {seat_id} is unavailable. No silent fallback was attempted."
+                )
             if provider_name == "ollama":
                 vetoed, reason = self.capability_prober.is_vetoed(model_name)
                 if vetoed:
-                    raise RuntimeError(f"Local model {model_name} was vetoed by the capability probe for {seat_id}: {reason}. Select a capable model explicitly.")
+                    raise RuntimeError(
+                        f"Local model {model_name} was vetoed by the capability probe for {seat_id}: {reason}. Select a capable model explicitly."
+                    )
             seat.tier_used = "local" if provider_name == "ollama" else "cloud"
             return provider, seat.tier_used
 
@@ -406,17 +459,29 @@ class AgentUFOCoordinator:
         if not has_local:
             # Save-token mode is strict: never consume cloud tokens because local inference is unavailable.
             self.budget_guard.verify_local_runtime_or_fail(seat_id, is_available=False)
-            raise RuntimeError(f"Save Tokens is enabled, but no available local model can serve {seat_id}. No cloud fallback was attempted.")
+            raise RuntimeError(
+                f"Save Tokens is enabled, but no available local model can serve {seat_id}. No cloud fallback was attempted."
+            )
 
         # Check empirical veto on the local model!
         model_name = getattr(self.local_llm, "model_name", "unknown")
         vetoed, reason = self.capability_prober.is_vetoed(model_name)
         if vetoed:
-            raise RuntimeError(f"Local model {model_name} was vetoed by the capability probe for {seat_id}: {reason}. No cloud fallback was attempted.")
+            raise RuntimeError(
+                f"Local model {model_name} was vetoed by the capability probe for {seat_id}: {reason}. No cloud fallback was attempted."
+            )
 
         return self.local_llm, "local"
 
-    def _generate_with_budget(self, seat: CrewSeat, llm: BaseLLMProvider, prompt: str, *, is_planner: bool = False, is_local_tier: bool = False) -> LLMResponse:
+    def _generate_with_budget(
+        self,
+        seat: CrewSeat,
+        llm: BaseLLMProvider,
+        prompt: str,
+        *,
+        is_planner: bool = False,
+        is_local_tier: bool = False,
+    ) -> LLMResponse:
         """Generate under a concurrency-safe token/cost reservation.
 
         The reservation is acquired before the provider call and released after actual
@@ -430,28 +495,52 @@ class AgentUFOCoordinator:
         reserved_tokens = 0
         reserved_cost = 0.0
         with self._budget_lock:
-            guard.check_headroom(seat_id, is_planner=is_planner,
-                                 estimated_tokens=estimated_prompt + 1,
-                                 is_local_tier=is_local_tier)
-            total_remaining = guard.config.total_token_cap - guard.total_tokens_used - self._reserved_total_tokens - estimated_prompt
-            seat_remaining = guard.config.per_seat_token_cap - guard.seat_tokens_used.get(seat_id, 0) - self._reserved_seat_tokens.get(seat_id, 0) - estimated_prompt
+            guard.check_headroom(
+                seat_id,
+                is_planner=is_planner,
+                estimated_tokens=estimated_prompt + 1,
+                is_local_tier=is_local_tier,
+            )
+            total_remaining = (
+                guard.config.total_token_cap
+                - guard.total_tokens_used
+                - self._reserved_total_tokens
+                - estimated_prompt
+            )
+            seat_remaining = (
+                guard.config.per_seat_token_cap
+                - guard.seat_tokens_used.get(seat_id, 0)
+                - self._reserved_seat_tokens.get(seat_id, 0)
+                - estimated_prompt
+            )
             remaining = min(4096, total_remaining, seat_remaining)
             if is_planner:
-                planner_remaining = guard.config.planner_token_cap - guard.planner_tokens_used - self._reserved_planner_tokens - estimated_prompt
+                planner_remaining = (
+                    guard.config.planner_token_cap
+                    - guard.planner_tokens_used
+                    - self._reserved_planner_tokens
+                    - estimated_prompt
+                )
                 remaining = min(remaining, planner_remaining)
             if not is_local_tier:
                 # Cost accounting in HardBudgetGuard defaults to $0.003 / 1K tokens.
                 # Reserve conservatively at that rate until provider-reported usage arrives.
-                spend_remaining = guard.config.max_usd_cap - guard.total_cost_usd - self._reserved_cloud_cost_usd
+                spend_remaining = (
+                    guard.config.max_usd_cap - guard.total_cost_usd - self._reserved_cloud_cost_usd
+                )
                 remaining = min(remaining, int(spend_remaining * 1000 / 0.003) - estimated_prompt)
             if remaining < 1:
                 guard.is_halted = True
-                guard.halt_reason = f"No budget headroom remains for {seat_id}; no model call was issued."
+                guard.halt_reason = (
+                    f"No budget headroom remains for {seat_id}; no model call was issued."
+                )
                 raise BudgetCapExceededError(guard.halt_reason)
             reserved_tokens = estimated_prompt + remaining
             reserved_cost = (reserved_tokens / 1000.0) * 0.003 if not is_local_tier else 0.0
             self._reserved_total_tokens += reserved_tokens
-            self._reserved_seat_tokens[seat_id] = self._reserved_seat_tokens.get(seat_id, 0) + reserved_tokens
+            self._reserved_seat_tokens[seat_id] = (
+                self._reserved_seat_tokens.get(seat_id, 0) + reserved_tokens
+            )
             if is_planner:
                 self._reserved_planner_tokens += reserved_tokens
             self._reserved_cloud_cost_usd += reserved_cost
@@ -460,17 +549,30 @@ class AgentUFOCoordinator:
         try:
             response = llm.generate(controlled, max_tokens=remaining)
             actual_prompt = int(getattr(response, "prompt_tokens", 0) or estimated_prompt)
-            actual_completion = int(getattr(response, "completion_tokens", 0) or max(1, len(getattr(response, "content", "")) // 4))
+            actual_completion = int(
+                getattr(response, "completion_tokens", 0)
+                or max(1, len(getattr(response, "content", "")) // 4)
+            )
             with self._budget_lock:
-                guard.record_usage(seat_id, actual_prompt, actual_completion,
-                                   is_planner=is_planner, is_local_tier=is_local_tier)
+                guard.record_usage(
+                    seat_id,
+                    actual_prompt,
+                    actual_completion,
+                    is_planner=is_planner,
+                    is_local_tier=is_local_tier,
+                )
                 seat.tokens_consumed += actual_prompt + actual_completion
                 seat.calls_made += 1
-                seat.token_usage_estimated = not bool(getattr(response, "prompt_tokens", 0) and getattr(response, "completion_tokens", 0))
-                if (guard.total_tokens_used > guard.config.total_token_cap or
-                    guard.seat_tokens_used[seat_id] > guard.config.per_seat_token_cap or
-                    (is_planner and guard.planner_tokens_used > guard.config.planner_token_cap) or
-                    (not is_local_tier and guard.total_cost_usd > guard.config.max_usd_cap)):
+                seat.token_usage_estimated = not bool(
+                    getattr(response, "prompt_tokens", 0)
+                    and getattr(response, "completion_tokens", 0)
+                )
+                if (
+                    guard.total_tokens_used > guard.config.total_token_cap
+                    or guard.seat_tokens_used[seat_id] > guard.config.per_seat_token_cap
+                    or (is_planner and guard.planner_tokens_used > guard.config.planner_token_cap)
+                    or (not is_local_tier and guard.total_cost_usd > guard.config.max_usd_cap)
+                ):
                     guard.is_halted = True
                     guard.halt_reason = f"Observed provider usage exceeded a configured cap for {seat_id}; no further model calls are allowed."
                     raise BudgetCapExceededError(guard.halt_reason)
@@ -478,31 +580,97 @@ class AgentUFOCoordinator:
         finally:
             with self._budget_lock:
                 self._reserved_total_tokens = max(0, self._reserved_total_tokens - reserved_tokens)
-                self._reserved_seat_tokens[seat_id] = max(0, self._reserved_seat_tokens.get(seat_id, 0) - reserved_tokens)
+                self._reserved_seat_tokens[seat_id] = max(
+                    0, self._reserved_seat_tokens.get(seat_id, 0) - reserved_tokens
+                )
                 if is_planner:
-                    self._reserved_planner_tokens = max(0, self._reserved_planner_tokens - reserved_tokens)
-                self._reserved_cloud_cost_usd = max(0.0, self._reserved_cloud_cost_usd - reserved_cost)
+                    self._reserved_planner_tokens = max(
+                        0, self._reserved_planner_tokens - reserved_tokens
+                    )
+                self._reserved_cloud_cost_usd = max(
+                    0.0, self._reserved_cloud_cost_usd - reserved_cost
+                )
 
     def _workspace_context(self, max_chars: int = 10000) -> str:
         """Build a bounded, secret-aware snapshot from the real workspace on disk."""
-        ignored_names = {".env", ".env.local", ".env.production", "secrets.json", "credentials.json", "id_rsa", "id_ed25519"}
-        allowed = {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json", ".md", ".toml", ".yaml", ".yml", ".go", ".rs", ".java", ".cpp", ".h", ".sql"}
+        ignored_names = {
+            ".env",
+            ".env.local",
+            ".env.production",
+            "secrets.json",
+            "credentials.json",
+            "id_rsa",
+            "id_ed25519",
+        }
+        allowed = {
+            ".py",
+            ".js",
+            ".ts",
+            ".tsx",
+            ".jsx",
+            ".html",
+            ".css",
+            ".json",
+            ".md",
+            ".toml",
+            ".yaml",
+            ".yml",
+            ".go",
+            ".rs",
+            ".java",
+            ".cpp",
+            ".h",
+            ".sql",
+        }
         files: List[str] = []
+
         def walk(nodes: List[Dict[str, Any]]) -> None:
             for node in nodes:
                 name = str(node.get("name") or "")
                 lowered_name = name.lower()
-                if name in ignored_names or (Path(name).suffix.lower() == ".json" and lowered_name not in {"package.json", "tsconfig.json"}) or any(word in lowered_name for word in ("secret", "credential", "api_key", "apikey", "token", "password")) or lowered_name.endswith((".pem", ".p12", ".key", ".secret")):
+                if (
+                    name in ignored_names
+                    or (
+                        Path(name).suffix.lower() == ".json"
+                        and lowered_name not in {"package.json", "tsconfig.json"}
+                    )
+                    or any(
+                        word in lowered_name
+                        for word in (
+                            "secret",
+                            "credential",
+                            "api_key",
+                            "apikey",
+                            "token",
+                            "password",
+                        )
+                    )
+                    or lowered_name.endswith((".pem", ".p12", ".key", ".secret"))
+                ):
                     continue
                 if node.get("is_dir"):
-                    if name not in {".git", ".agentufo", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}:
+                    if name not in {
+                        ".git",
+                        ".agentufo",
+                        "node_modules",
+                        ".venv",
+                        "venv",
+                        "__pycache__",
+                        "dist",
+                        "build",
+                    }:
                         walk(node.get("children", []))
-                elif Path(name).suffix.lower() in allowed and int(node.get("size", 0) or 0) <= 50000:
+                elif (
+                    Path(name).suffix.lower() in allowed and int(node.get("size", 0) or 0) <= 50000
+                ):
                     files.append(str(node.get("path") or name))
+
         try:
             walk(self.workspace.get_workspace_tree(max_depth=3))
         except Exception:
-            return "Workspace tree could not be read; use only paths explicitly provided in the task."
+            return (
+                "Workspace tree could not be read; use only paths explicitly provided in the task."
+            )
         out = ["Workspace files (relative paths):"]
         out.extend(f"- {p}" for p in files[:80])
         remaining = max_chars - sum(len(x) + 1 for x in out)
@@ -512,7 +680,7 @@ class AgentUFOCoordinator:
             if remaining <= 300:
                 break
             try:
-                content = self.workspace.read_file(path)[:min(1800, remaining)]
+                content = self.workspace.read_file(path)[: min(1800, remaining)]
             except Exception:
                 continue
             block = f"\n--- {path} ---\n{content}"
@@ -523,18 +691,51 @@ class AgentUFOCoordinator:
     def _choose_target_path(self, task: str, architecture: str, fallback: str) -> str:
         """Choose a workspace-relative file path with traversal and sensitive-path rejection."""
         import re
+
         extensions = r"(?:py|js|mjs|ts|tsx|jsx|html|css|json|md|yaml|yml|toml|go|rs|java|cpp|h|sql)"
-        pattern = re.compile(rf"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_.-]+\.(?:{extensions})(?![A-Za-z0-9_.-])")
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_.-]+\.(?:{extensions})(?![A-Za-z0-9_.-])"
+        )
         explicit = []
-        create_intent = any(word in task.lower() for word in ("create", "add", "new file", "write", "generate"))
-        allowed_suffixes = {".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".htm", ".css", ".json", ".md", ".yaml", ".yml", ".toml", ".go", ".rs", ".java", ".cpp", ".h", ".sql"}
+        create_intent = any(
+            word in task.lower() for word in ("create", "add", "new file", "write", "generate")
+        )
+        allowed_suffixes = {
+            ".py",
+            ".js",
+            ".mjs",
+            ".ts",
+            ".tsx",
+            ".jsx",
+            ".html",
+            ".htm",
+            ".css",
+            ".json",
+            ".md",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".go",
+            ".rs",
+            ".java",
+            ".cpp",
+            ".h",
+            ".sql",
+        }
         for match in pattern.finditer(task):
             candidate = match.group(0).replace("\\", "/")
-            if ".." in Path(candidate).parts or candidate.startswith("/") or candidate.split("/")[0] in {".git", ".agentufo", "node_modules", ".venv"} or Path(candidate).suffix.lower() not in allowed_suffixes:
+            if (
+                ".." in Path(candidate).parts
+                or candidate.startswith("/")
+                or candidate.split("/")[0] in {".git", ".agentufo", "node_modules", ".venv"}
+                or Path(candidate).suffix.lower() not in allowed_suffixes
+            ):
                 continue
             try:
                 resolved = (self.workspace.root / candidate).resolve(strict=False)
-                if resolved.is_relative_to(self.workspace.root) and ((resolved.exists() and resolved.is_file()) or create_intent):
+                if resolved.is_relative_to(self.workspace.root) and (
+                    (resolved.exists() and resolved.is_file()) or create_intent
+                ):
                     explicit.append(candidate)
             except (OSError, ValueError):
                 continue
@@ -547,10 +748,34 @@ class AgentUFOCoordinator:
             return fallback
         if candidate.split("/")[0] in {".git", ".agentufo", "node_modules", ".venv"}:
             return fallback
-        allowed_suffixes = {".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".htm", ".css", ".json", ".md", ".yaml", ".yml", ".toml", ".go", ".rs", ".java", ".cpp", ".h", ".sql"}
+        allowed_suffixes = {
+            ".py",
+            ".js",
+            ".mjs",
+            ".ts",
+            ".tsx",
+            ".jsx",
+            ".html",
+            ".htm",
+            ".css",
+            ".json",
+            ".md",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".go",
+            ".rs",
+            ".java",
+            ".cpp",
+            ".h",
+            ".sql",
+        }
         try:
             resolved = (self.workspace.root / candidate).resolve(strict=False)
-            if not resolved.is_relative_to(self.workspace.root) or resolved.suffix.lower() not in allowed_suffixes:
+            if (
+                not resolved.is_relative_to(self.workspace.root)
+                or resolved.suffix.lower() not in allowed_suffixes
+            ):
                 return fallback
         except (OSError, ValueError):
             return fallback
@@ -558,8 +783,45 @@ class AgentUFOCoordinator:
 
     def _scan_workspace_fingerprints(self) -> Dict[str, Tuple[int, int]]:
         """Track bounded source/document files without reading secrets or dependency trees."""
-        allowed = {".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".htm", ".css", ".json", ".md", ".toml", ".yaml", ".yml", ".go", ".rs", ".java", ".cpp", ".h", ".sql"}
-        excluded_dirs = {".git", ".agentufo", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", "target", "vendor", "coverage", ".cache", ".next", "site-packages", "third_party"}
+        allowed = {
+            ".py",
+            ".js",
+            ".mjs",
+            ".ts",
+            ".tsx",
+            ".jsx",
+            ".html",
+            ".htm",
+            ".css",
+            ".json",
+            ".md",
+            ".toml",
+            ".yaml",
+            ".yml",
+            ".go",
+            ".rs",
+            ".java",
+            ".cpp",
+            ".h",
+            ".sql",
+        }
+        excluded_dirs = {
+            ".git",
+            ".agentufo",
+            "node_modules",
+            ".venv",
+            "venv",
+            "__pycache__",
+            "dist",
+            "build",
+            "target",
+            "vendor",
+            "coverage",
+            ".cache",
+            ".next",
+            "site-packages",
+            "third_party",
+        }
         excluded_words = ("secret", "credential", "api_key", "apikey", "token", "password")
         found: Dict[str, Tuple[int, int]] = {}
         visited_dirs = 0
@@ -572,10 +834,16 @@ class AgentUFOCoordinator:
                 if visited_dirs > max_dirs or depth >= max_depth:
                     dirs[:] = []
                 else:
-                    dirs[:] = sorted(d for d in dirs if d not in excluded_dirs and not d.startswith("."))[:80]
+                    dirs[:] = sorted(
+                        d for d in dirs if d not in excluded_dirs and not d.startswith(".")
+                    )[:80]
                 for name in files:
                     low = name.lower()
-                    if any(word in low for word in excluded_words) or low in {".env", ".env.local", ".env.production"} or low.endswith((".pem", ".p12", ".key", ".secret")):
+                    if (
+                        any(word in low for word in excluded_words)
+                        or low in {".env", ".env.local", ".env.production"}
+                        or low.endswith((".pem", ".p12", ".key", ".secret"))
+                    ):
                         continue
                     if Path(name).suffix.lower() not in allowed:
                         continue
@@ -604,7 +872,9 @@ class AgentUFOCoordinator:
         removed = [p for p in previous if p not in current]
         if not changed and not removed:
             return ""
-        sections = ["LIVE WORKSPACE CHANGE DETECTED. Reconcile this with the task before proceeding."]
+        sections = [
+            "LIVE WORKSPACE CHANGE DETECTED. Reconcile this with the task before proceeding."
+        ]
         if removed:
             sections.append("Removed files: " + ", ".join(removed[:12]))
         for rel in changed[:8]:
@@ -631,12 +901,21 @@ class AgentUFOCoordinator:
         if injected:
             seat.injected_context = ""
             self._persist_durable_state()
-            prompt += "\n\nLIVE SHARED CONTEXT UPDATE (newest workspace/task information; obey it):\n" + injected
+            prompt += (
+                "\n\nLIVE SHARED CONTEXT UPDATE (newest workspace/task information; obey it):\n"
+                + injected
+            )
         filesystem_update = self._workspace_change_context()
         if filesystem_update:
             prompt += "\n\n" + filesystem_update
             seat.current_thought = "Reconciling live workspace changes"
-            self.post_message("Workspace Watch", seat.seat_id, "filesystem_change", "Live filesystem update", {"summary": filesystem_update[:2000]})
+            self.post_message(
+                "Workspace Watch",
+                seat.seat_id,
+                "filesystem_change",
+                "Live filesystem update",
+                {"summary": filesystem_update[:2000]},
+            )
         return prompt
 
     def run_crew(
@@ -653,8 +932,13 @@ class AgentUFOCoordinator:
         t0 = time.perf_counter()
         if self.mode != AgentUFOMode.CREW_PIPELINE:
             return AgentUFOExecutionReport(
-                task=task, mode=self.mode.value, status="error", final_code="",
-                target_filepaths=[], seats=self.seats, mailbox_messages=self.mailbox,
+                task=task,
+                mode=self.mode.value,
+                status="error",
+                final_code="",
+                target_filepaths=[],
+                seats=self.seats,
+                mailbox_messages=self.mailbox,
                 error=f"Execution mode '{self.mode.value}' is not implemented in the verified pipeline. No work was run.",
                 elapsed_seconds=time.perf_counter() - t0,
             )
@@ -672,18 +956,30 @@ class AgentUFOCoordinator:
             target_file = "index.html"
         # Explicit existing paths in the task take precedence over planner suggestions.
         import re
-        explicit_path = re.search(r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_.-]+\.(?:py|js|mjs|ts|tsx|jsx|html|css|json|md|yaml|yml|toml|go|rs|java|cpp|h|sql)(?![A-Za-z0-9_.-])", task)
+
+        explicit_path = re.search(
+            r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_.-]+\.(?:py|js|mjs|ts|tsx|jsx|html|css|json|md|yaml|yml|toml|go|rs|java|cpp|h|sql)(?![A-Za-z0-9_.-])",
+            task,
+        )
         if explicit_path:
             candidate = explicit_path.group(0).replace("\\", "/")
             try:
                 resolved = (self.workspace.root / candidate).resolve(strict=False)
-                if resolved.is_relative_to(self.workspace.root) and resolved.exists() and resolved.is_file():
+                if (
+                    resolved.is_relative_to(self.workspace.root)
+                    and resolved.exists()
+                    and resolved.is_file()
+                ):
                     target_file = candidate
             except (OSError, ValueError):
                 pass
         workspace_context = self._workspace_context()
         self._workspace_watch_state = self._scan_workspace_fingerprints()
-        emit(f"🚀 AgentUFO Crew activated for task: '{task[:60]}...'", 10, {"status": "started", "workspace_root": str(self.workspace.root)})
+        emit(
+            f"🚀 AgentUFO Crew activated for task: '{task[:60]}...'",
+            10,
+            {"status": "started", "workspace_root": str(self.workspace.root)},
+        )
 
         # =====================================================================
         # PHASE 1: Architect Seat (Blueprint & Path Assignment)
@@ -704,9 +1000,13 @@ class AgentUFOCoordinator:
             "Do not choose secrets, dependency trees, build outputs, or AgentUFO runtime state."
         )
         architect.current_thought = "Writing architecture specification"
-        resp_arch = self._generate_with_budget(architect, llm_arch, arch_prompt, is_planner=True, is_local_tier=(tier_arch == "local"))
+        resp_arch = self._generate_with_budget(
+            architect, llm_arch, arch_prompt, is_planner=True, is_local_tier=(tier_arch == "local")
+        )
         target_file = self._choose_target_path(task, resp_arch.content, target_file)
-        architect.current_thought = f"Selected target {target_file}; handing specification to Builder"
+        architect.current_thought = (
+            f"Selected target {target_file}; handing specification to Builder"
+        )
         architect.status = "completed"
 
         # Architect posts Brief to Mailbox for Builder
@@ -732,12 +1032,21 @@ class AgentUFOCoordinator:
         except PathLockConflictError as e:
             emit(f"❌ Lock Conflict: {e}", 0)
             return AgentUFOExecutionReport(
-                task=task, mode=self.mode.value, status="error", final_code="",
-                target_filepaths=[], seats=self.seats, mailbox_messages=self.mailbox,
-                error=str(e), elapsed_seconds=time.perf_counter() - t0,
+                task=task,
+                mode=self.mode.value,
+                status="error",
+                final_code="",
+                target_filepaths=[],
+                seats=self.seats,
+                mailbox_messages=self.mailbox,
+                error=str(e),
+                elapsed_seconds=time.perf_counter() - t0,
             )
 
-        emit(f"🔨 Builder ({builder.seat_id}) acquired lock on '{target_file}' and implementing...", 50)
+        emit(
+            f"🔨 Builder ({builder.seat_id}) acquired lock on '{target_file}' and implementing...",
+            50,
+        )
         try:
             existing_content = self.workspace.read_file(target_file)[:20000]
             file_state = f"EXISTING FILE CONTENT (replace only as required by the task):\n```\n{existing_content}\n```"
@@ -755,9 +1064,13 @@ class AgentUFOCoordinator:
         builder.current_thought = "Generating implementation"
         audit_seat = reviewer if reviewer.seat_id != builder.seat_id else architect
         audit_index = self.seats.index(audit_seat)
-        llm_audit, tier_audit = self._resolve_llm_and_tier(audit_index, audit_seat.seat_id, is_planner=False)
+        llm_audit, tier_audit = self._resolve_llm_and_tier(
+            audit_index, audit_seat.seat_id, is_planner=False
+        )
         audit_seat.tier_used = tier_audit
-        audit_seat.current_thought = "Auditing architecture and security constraints in parallel with implementation"
+        audit_seat.current_thought = (
+            "Auditing architecture and security constraints in parallel with implementation"
+        )
         audit_seat.status = "working"
         security_prompt = (
             "You are AgentUFO's independent Security/Quality Auditor. This task is intentionally "
@@ -771,10 +1084,22 @@ class AgentUFOCoordinator:
         # Real concurrency: Builder implements while Reviewer independently audits the plan.
         # The budget guard above reserves aggregate headroom atomically for both calls.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="agentufo-crew") as pool:
-            builder_future = pool.submit(self._generate_with_budget, builder, llm_bld, bld_prompt,
-                                         is_planner=False, is_local_tier=(tier_bld == "local"))
-            reviewer_future = pool.submit(self._generate_with_budget, audit_seat, llm_audit, security_prompt,
-                                          is_planner=False, is_local_tier=(tier_audit == "local"))
+            builder_future = pool.submit(
+                self._generate_with_budget,
+                builder,
+                llm_bld,
+                bld_prompt,
+                is_planner=False,
+                is_local_tier=(tier_bld == "local"),
+            )
+            reviewer_future = pool.submit(
+                self._generate_with_budget,
+                audit_seat,
+                llm_audit,
+                security_prompt,
+                is_planner=False,
+                is_local_tier=(tier_audit == "local"),
+            )
             try:
                 resp_bld = builder_future.result()
                 resp_security = reviewer_future.result()
@@ -783,7 +1108,9 @@ class AgentUFOCoordinator:
                 for future in (builder_future, reviewer_future):
                     future.cancel()
                 raise
-        audit_seat.current_thought = "Independent architecture audit complete; waiting for executable verification"
+        audit_seat.current_thought = (
+            "Independent architecture audit complete; waiting for executable verification"
+        )
         if audit_seat is architect:
             audit_seat.status = "completed"
         self.post_message(
@@ -791,10 +1118,16 @@ class AgentUFOCoordinator:
             to_seat=builder.seat_id,
             msg_type="security_audit",
             title="Parallel architecture/security audit",
-            payload={"advisory_findings": resp_security.content[:12000], "authoritative_gate": "sandbox tests and review gate"},
+            payload={
+                "advisory_findings": resp_security.content[:12000],
+                "authoritative_gate": "sandbox tests and review gate",
+            },
         )
-        emit("Independent security/quality audit completed in parallel with implementation.", 58,
-             {"status": "parallel_review_complete", "advisory_only": True})
+        emit(
+            "Independent security/quality audit completed in parallel with implementation.",
+            58,
+            {"status": "parallel_review_complete", "advisory_only": True},
+        )
 
         code_candidate = self._extract_code(resp_bld.content)
 
@@ -813,16 +1146,25 @@ class AgentUFOCoordinator:
         tests_dir = root / "tests"
         if tests_dir.is_dir():
             try:
-                has_project_tests = has_project_tests or any(p.is_file() and (p.name.startswith("test_") or p.name.endswith("_test.py")) for p in list(tests_dir.iterdir())[:200])
+                has_project_tests = has_project_tests or any(
+                    p.is_file() and (p.name.startswith("test_") or p.name.endswith("_test.py"))
+                    for p in list(tests_dir.iterdir())[:200]
+                )
             except OSError:
                 pass
         if target_file.endswith(".py") and not has_project_tests:
             test_prompt = f"Given this code:\n{code_candidate[:12000]}\n\nWrite 3 pytest or assert statements to verify correctness."
             builder.current_thought = "Generating bounded verification fixture"
-            resp_test = self._generate_with_budget(builder, llm_bld, test_prompt, is_planner=False, is_local_tier=(tier_bld == "local"))
+            resp_test = self._generate_with_budget(
+                builder, llm_bld, test_prompt, is_planner=False, is_local_tier=(tier_bld == "local")
+            )
             test_fixture = self._extract_code(resp_test.content)
         elif has_project_tests:
-            emit("Existing project test suite detected; skipping redundant test-generation model call.", 68, {"status": "testing", "test_fixture": "project_tests"})
+            emit(
+                "Existing project test suite detected; skipping redundant test-generation model call.",
+                68,
+                {"status": "testing", "test_fixture": "project_tests"},
+            )
 
         # Builder posts PR to Mailbox for Reviewer Gate
         pr_msg = self.post_message(
@@ -830,7 +1172,11 @@ class AgentUFOCoordinator:
             to_seat=reviewer.seat_id,
             msg_type="pull_request",
             title=f"PR: Implementation of {target_file}",
-            payload={"code": code_candidate, "staged_path": str(staged_path), "test_fixture": test_fixture},
+            payload={
+                "code": code_candidate,
+                "staged_path": str(staged_path),
+                "test_fixture": test_fixture,
+            },
         )
         builder.status = "waiting_review"
 
@@ -840,11 +1186,14 @@ class AgentUFOCoordinator:
         reviewer.status = "working"
         reviewer.current_thought = "Executing tests and deciding merge gate"
         reviewer.calls_made += 1  # one verification pass; not an LLM call
-        emit(f"🛡️ Review Gatekeeper ({reviewer.seat_id}) executing project tests & sandbox verification...", 75)
+        emit(
+            f"🛡️ Review Gatekeeper ({reviewer.seat_id}) executing project tests & sandbox verification...",
+            75,
+        )
 
         def repair_callback(broken_code: str, test_err: str) -> str:
             """Builder gets exactly ONE chance to repair code based on test failure."""
-            emit(f"⚠️ Test failure detected. Triggering 1 repair cycle for Builder...", 80)
+            emit("⚠️ Test failure detected. Triggering 1 repair cycle for Builder...", 80)
             rep_prompt = (
                 f"Your code failed project test verification:\n"
                 f"Test Output / Traceback:\n{test_err}\n\n"
@@ -852,7 +1201,9 @@ class AgentUFOCoordinator:
                 f"Fix the bug and output the corrected complete code inside a markdown code block."
             )
             builder.current_thought = "Repairing after failed verification"
-            resp_rep = self._generate_with_budget(builder, llm_bld, rep_prompt, is_planner=False, is_local_tier=(tier_bld == "local"))
+            resp_rep = self._generate_with_budget(
+                builder, llm_bld, rep_prompt, is_planner=False, is_local_tier=(tier_bld == "local")
+            )
             repaired = self._extract_code(resp_rep.content)
             # Re-stage repaired candidate
             self.workspace.stage_file(target_file, repaired, seat_id=builder.seat_id)
@@ -884,14 +1235,20 @@ class AgentUFOCoordinator:
             self.workspace.commit_staged(target_file, seat_id=builder.seat_id)
             builder.status = "completed"
             reviewer.status = "completed"
-            emit(f"✅ Review Gate PASSED ({review_report.status})! Changes verified against tests and merged into repository.", 100)
+            emit(
+                f"✅ Review Gate PASSED ({review_report.status})! Changes verified against tests and merged into repository.",
+                100,
+            )
             status_str = "success"
         else:
             # ATOMIC ROLLBACK / MERGE ABORTED: Discard staged changes, protecting repo
             self.workspace.discard_staged(target_file, seat_id=builder.seat_id)
             builder.status = "rejected"
             reviewer.status = "completed"
-            emit(f"⛔ Review Gate REJECTED: Tests failed after 1 repair attempt. Merge aborted; repository untouched.", 100)
+            emit(
+                "⛔ Review Gate REJECTED: Tests failed after 1 repair attempt. Merge aborted; repository untouched.",
+                100,
+            )
             status_str = "rejected"
 
         # Unlock paths held by builder
@@ -914,6 +1271,7 @@ class AgentUFOCoordinator:
     def _extract_code(self, raw: str) -> str:
         """Extracts code from markdown fences."""
         import re
+
         if "```" in raw:
             matches = re.findall(r"```(?:[a-zA-Z0-9_\-]+)?\s*([\s\S]*?)\s*```", raw)
             if matches:

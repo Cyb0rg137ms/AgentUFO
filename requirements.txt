@@ -1,2 +1,3 @@
 # Core server uses the Python standard library.
 # Optional numerical experiment: python -m pip install -e ".[qdit]"
+# Dev/CI toolchain (pinned): pip install -r requirements-dev.txt
