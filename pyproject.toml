@@ -4,16 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentufo-studio"
-version = "0.1.0"
+version = "0.2.0"
+license = { text = "Apache-2.0" }
+readme = "README.md"
 description = "Local-first multi-agent developer studio and workspace sandbox"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
 agentufo = "run_web_ui:main"
+agentufo-bench = "agent_core.bench:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "bandit>=1.7", "build>=1.2"]
+bench = ["matplotlib>=3.7"]
 qdit = ["numpy>=1.24,<3"]
 
 [tool.pytest.ini_options]
@@ -24,6 +28,16 @@ addopts = "-ra"
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "I"]
+# Legacy patterns kept for now (tracked in docs/LIMITATIONS.md); new code passes them.
+ignore = ["E402", "E741", "B904", "B905", "B007", "F841"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+
 [tool.setuptools.packages.find]
 include = ["agent_core*", "server*", "web*"]
 
@@ -32,3 +46,19 @@ py-modules = ["run_web_ui"]
 
 [tool.setuptools.package-data]
 web = ["index.html", "css/*.css", "js/*.js"]
+
+# Typing debt in legacy modules (Optional-narrowing and loose dict typing). These are
+# type-checked for syntax/imports but their errors do not gate CI yet; see
+# docs/LIMITATIONS.md. All other modules (server.web_server, permissions, sandbox,
+# bench, crew runtime, ...) must type-check cleanly.
+[[tool.mypy.overrides]]
+module = [
+    "agent_core.agentufo_swarm", "agent_core.bridgemind_swarm",
+    "agent_core.llm.cloud_providers", "agent_core.llm.ollama_launcher",
+    "agent_core.llm.registry", "agent_core.logos.dag_executor",
+    "agent_core.logos.decomposition", "agent_core.logos.fractal_mera",
+    "agent_core.logos.pondering_engine", "agent_core.memory", "agent_core.orchestrator",
+    "agent_core.routing_benchmark", "agent_core.tools", "agent_core.workspace_manager",
+    "server.handlers",
+]
+ignore_errors = true

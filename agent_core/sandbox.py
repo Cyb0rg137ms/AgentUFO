@@ -15,17 +15,17 @@ Supported Runtimes:
 
 from __future__ import annotations
 
+import json
 import os
 import re
-import json
-import sys
 import shutil
-import tempfile
 import subprocess
+import sys
+import tempfile
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class CodeExecutionSandbox:
@@ -65,6 +65,7 @@ class CodeExecutionSandbox:
         depth, not a substitute for patching the host/container runtime.
         """
         import re
+
         if runtime not in {"python", "node"}:
             return False, "Secure container mode currently supports only python and node runtimes."
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", Path(filename).name):
@@ -77,8 +78,13 @@ class CodeExecutionSandbox:
             return False, "Resource limit outside permitted bounds."
         engine = shutil.which("docker") or shutil.which("podman")
         if not engine:
-            return False, "Secure execution unavailable: install Docker or Podman; unsafe host fallback is disabled."
-        selected_image = image or ("python:3.12-alpine" if runtime == "python" else "node:22-alpine")
+            return (
+                False,
+                "Secure execution unavailable: install Docker or Podman; unsafe host fallback is disabled.",
+            )
+        selected_image = image or (
+            "python:3.12-alpine" if runtime == "python" else "node:22-alpine"
+        )
         if not re.fullmatch(r"[A-Za-z0-9./:_-]{1,200}", selected_image):
             return False, "Invalid container image reference."
         with tempfile.TemporaryDirectory(prefix="agentufo-secure-") as tmpdir:
@@ -97,61 +103,120 @@ class CodeExecutionSandbox:
                 else:
                     mount_path = str(source_dir)
                 in_container = f"/input/{source_path.name}"
-                command = [engine, "run", "--rm", "--pull=never", "--network=none",
-                           "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
-                           "--pids-limit", str(pids_limit), "--memory", memory_limit,
-                           "--cpus", str(cpu_limit), "--user", "65534:65534",
-                           "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
-                           "--mount", f"type=bind,src={mount_path},dst=/input,readonly",
-                           "--workdir", "/tmp", selected_image]
-                command.extend(["python", "-I", in_container] if runtime == "python" else ["node", in_container])
+                command = [
+                    engine,
+                    "run",
+                    "--rm",
+                    "--pull=never",
+                    "--network=none",
+                    "--read-only",
+                    "--cap-drop=ALL",
+                    "--security-opt=no-new-privileges:true",
+                    "--pids-limit",
+                    str(pids_limit),
+                    "--memory",
+                    memory_limit,
+                    "--cpus",
+                    str(cpu_limit),
+                    "--user",
+                    "65534:65534",
+                    "--tmpfs",
+                    "/tmp:rw,noexec,nosuid,size=16m",
+                    "--mount",
+                    f"type=bind,src={mount_path},dst=/input,readonly",
+                    "--workdir",
+                    "/tmp",
+                    selected_image,
+                ]
+                command.extend(
+                    ["python", "-I", in_container]
+                    if runtime == "python"
+                    else ["node", in_container]
+                )
                 container_name = "agentufo-" + uuid.uuid4().hex[:16]
                 command[2:2] = ["--name", container_name]
                 captured = {"stdout": bytearray(), "stderr": bytearray()}
                 truncated = {"stdout": False, "stderr": False}
+
                 def drain(stream, key):
                     # Always drain pipes to prevent child deadlock, but retain bounded logs.
                     cap = max(512, output_limit_bytes // 2)
                     while True:
                         chunk = stream.read(4096)
-                        if not chunk: break
+                        if not chunk:
+                            break
                         room = cap - len(captured[key])
-                        if room > 0: captured[key].extend(chunk[:room])
-                        if len(chunk) > room: truncated[key] = True
+                        if room > 0:
+                            captured[key].extend(chunk[:room])
+                        if len(chunk) > room:
+                            truncated[key] = True
+
                 process = None
                 try:
-                    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                               env=os.environ.copy())
-                    readers = [threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
-                               threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True)]
-                    for reader in readers: reader.start()
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=os.environ.copy(),
+                    )
+                    readers = [
+                        threading.Thread(
+                            target=drain, args=(process.stdout, "stdout"), daemon=True
+                        ),
+                        threading.Thread(
+                            target=drain, args=(process.stderr, "stderr"), daemon=True
+                        ),
+                    ]
+                    for reader in readers:
+                        reader.start()
                     try:
                         return_code = process.wait(timeout=self.timeout)
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait(timeout=2)
                         raise
-                    for reader in readers: reader.join(timeout=2)
-                    stdout = bytes(captured["stdout"]); stderr = bytes(captured["stderr"])
+                    for reader in readers:
+                        reader.join(timeout=2)
+                    stdout = bytes(captured["stdout"])
+                    stderr = bytes(captured["stderr"])
                     combined = stdout + (b"\n" if stdout and stderr else b"") + stderr
                     output = combined.decode("utf-8", errors="replace")
-                    if return_code == 125 and (b"No such image" in combined or b"pull access" in combined):
-                        return False, f"Secure execution image {selected_image!r} is not available locally; pre-pull it explicitly."
+                    if return_code == 125 and (
+                        b"No such image" in combined or b"pull access" in combined
+                    ):
+                        return (
+                            False,
+                            f"Secure execution image {selected_image!r} is not available locally; pre-pull it explicitly.",
+                        )
                     was_truncated = any(truncated.values())
-                    return return_code == 0, output + ("\n[output truncated]" if was_truncated else "")
+                    return return_code == 0, output + (
+                        "\n[output truncated]" if was_truncated else ""
+                    )
                 except subprocess.TimeoutExpired:
                     return False, f"Secure container execution timed out after {self.timeout}s."
                 except OSError as exc:
-                    return False, f"Could not start secure container runtime: {type(exc).__name__}: {exc}"
+                    return (
+                        False,
+                        f"Could not start secure container runtime: {type(exc).__name__}: {exc}",
+                    )
                 finally:
                     # A timed-out client must not leave an unobserved workload running.
                     try:
-                        subprocess.run([engine, "rm", "-f", container_name], stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, timeout=3, check=False, env=os.environ.copy())
+                        subprocess.run(
+                            [engine, "rm", "-f", container_name],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            timeout=3,
+                            check=False,
+                            env=os.environ.copy(),
+                        )
                     except Exception:
                         pass
             except OSError as exc:
-                return False, f"Could not stage source for secure execution: {type(exc).__name__}: {exc}"
+                return (
+                    False,
+                    f"Could not stage source for secure execution: {type(exc).__name__}: {exc}",
+                )
 
     def detect_runtime(self, filename: str, code_content: str) -> str:
         """Infers the runtime from filename extension or code markers."""
@@ -176,7 +241,13 @@ class CodeExecutionSandbox:
         clean_low = clean.lower()
         if clean_low.startswith("<!doctype html") or "<html" in clean_low or "<canvas" in clean_low:
             return "html"
-        if "console.log" in clean or "require(" in clean or "export default" in clean or "import " in clean and "from '" in clean:
+        if (
+            "console.log" in clean
+            or "require(" in clean
+            or "export default" in clean
+            or "import " in clean
+            and "from '" in clean
+        ):
             if "interface " in clean or ": string" in clean or ": number" in clean:
                 return "typescript"
             return "node"
@@ -220,14 +291,27 @@ class CodeExecutionSandbox:
                 return False, "Markdown validation failed: file is empty."
             fence_count = len(re.findall(r"(?m)^\s*(```|~~~)", code_content))
             if fence_count % 2:
-                return False, "Markdown validation failed: fenced code block delimiters are unbalanced."
-            return True, "Markdown structure checks passed (static validation; no rendered preview executed)."
+                return (
+                    False,
+                    "Markdown validation failed: fenced code block delimiters are unbalanced.",
+                )
+            return (
+                True,
+                "Markdown structure checks passed (static validation; no rendered preview executed).",
+            )
         if suffix == ".css":
             cleaned = re.sub(r"/\*[\s\S]*?\*/", "", code_content)
             cleaned = re.sub(r"(['\"]).*?\1", "", cleaned)
-            if cleaned.count("{") != cleaned.count("}") or cleaned.count("{") == 0 and cleaned.strip():
+            if (
+                cleaned.count("{") != cleaned.count("}")
+                or cleaned.count("{") == 0
+                and cleaned.strip()
+            ):
                 return False, "CSS structure check failed: unbalanced or missing rule braces."
-            return True, "CSS brace structure passed (static validation; no browser render executed)."
+            return (
+                True,
+                "CSS brace structure passed (static validation; no browser render executed).",
+            )
         if suffix == ".toml":
             try:
                 try:
@@ -247,8 +331,13 @@ class CodeExecutionSandbox:
 
         # Security boundary guard against dangerous commands
         blocklist = [
-            "import os; os.system", "subprocess.call", "shutil.rmtree", "eval(",
-            "format c:", "del /f /s /q c:", "rm -rf /",
+            "import os; os.system",
+            "subprocess.call",
+            "shutil.rmtree",
+            "eval(",
+            "format c:",
+            "del /f /s /q c:",
+            "rm -rf /",
         ]
         code_lower = code_content.lower()
         if any(bad in code_lower for bad in blocklist):
@@ -259,9 +348,13 @@ class CodeExecutionSandbox:
             if secure_runtime in ("javascript", "node"):
                 secure_runtime = "node"
             if secure_runtime not in {"python", "node"}:
-                return False, (f"Secure mode does not support runtime {secure_runtime!r} yet. "
-                               "Use Python/Node in container mode; host execution requires explicit mode='host'.")
-            return self.execute_untrusted_container(code_content, filename=filename, runtime=secure_runtime)
+                return False, (
+                    f"Secure mode does not support runtime {secure_runtime!r} yet. "
+                    "Use Python/Node in container mode; host execution requires explicit mode='host'."
+                )
+            return self.execute_untrusted_container(
+                code_content, filename=filename, runtime=secure_runtime
+            )
 
         # Explicit development-only host execution. This is not a security boundary.
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -309,7 +402,12 @@ class CodeExecutionSandbox:
                 else:
                     # Windows fallback: execute with powershell
                     ps_bin = shutil.which("powershell") or "powershell.exe"
-                    cmd = [ps_bin, "-NoProfile", "-Command", f"Get-Content '{file_path}' | & {{ $input }}"]
+                    cmd = [
+                        ps_bin,
+                        "-NoProfile",
+                        "-Command",
+                        f"Get-Content '{file_path}' | & {{ $input }}",
+                    ]
 
             elif target_runtime == "batch":
                 cmd = ["cmd.exe", "/c", str(file_path)]
@@ -347,7 +445,10 @@ class CodeExecutionSandbox:
                 return success, logs
 
             except subprocess.TimeoutExpired:
-                return False, f"Execution Error: Process timed out (exceeded {self.timeout}s limit)."
+                return (
+                    False,
+                    f"Execution Error: Process timed out (exceeded {self.timeout}s limit).",
+                )
             except Exception as e:
                 return False, f"Subprocess initialization error: {e}"
 
@@ -379,9 +480,14 @@ class CodeExecutionSandbox:
                 return False, "Project file paths and contents must be strings."
             name = raw_name.replace("\\", "/")
             rel = Path(name)
-            if (not name or name.startswith("/") or ".." in rel.parts or
-                    any(part in {"", "."} for part in name.split("/")) or
-                    re.match(r"^[A-Za-z]:", name) or "\x00" in name):
+            if (
+                not name
+                or name.startswith("/")
+                or ".." in rel.parts
+                or any(part in {"", "."} for part in name.split("/"))
+                or re.match(r"^[A-Za-z]:", name)
+                or "\x00" in name
+            ):
                 return False, f"Unsafe project path rejected: {raw_name!r}."
             total_size += len(content.encode("utf-8"))
             if total_size > 5_000_000:
@@ -420,7 +526,14 @@ class CodeExecutionSandbox:
                 tsx_bin = shutil.which("tsx") or shutil.which("ts-node")
                 cmd = [tsx_bin or "node", str(entry_path)]
             elif target_runtime == "powershell":
-                cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(entry_path)]
+                cmd = [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(entry_path),
+                ]
             else:
                 cmd = [sys.executable, "-u", str(entry_path)]
 
@@ -435,7 +548,9 @@ class CodeExecutionSandbox:
                     env=env,
                 )
                 logs = result.stdout + result.stderr
-                success = (result.returncode == 0) and ("Traceback" not in logs and "Error:" not in logs)
+                success = (result.returncode == 0) and (
+                    "Traceback" not in logs and "Error:" not in logs
+                )
                 return success, logs
             except subprocess.TimeoutExpired:
                 return False, f"Project execution timed out after {self.timeout}s."
@@ -472,9 +587,14 @@ class CodeExecutionSandbox:
                 return False, "Project file paths and contents must be strings."
             name = raw_name.replace("\\", "/")
             rel = Path(name)
-            if (not name or name.startswith("/") or ".." in rel.parts or
-                    any(part in {"", "."} for part in name.split("/")) or
-                    re.match(r"^[A-Za-z]:", name) or "\x00" in name):
+            if (
+                not name
+                or name.startswith("/")
+                or ".." in rel.parts
+                or any(part in {"", "."} for part in name.split("/"))
+                or re.match(r"^[A-Za-z]:", name)
+                or "\x00" in name
+            ):
                 return False, f"Unsafe project path rejected: {raw_name!r}."
             if len(content.encode("utf-8")) > max_total_bytes:
                 return False, "A project file exceeds the maximum project size."
@@ -489,7 +609,10 @@ class CodeExecutionSandbox:
         if target_runtime in {"javascript", "node"}:
             target_runtime = "node"
         if target_runtime not in {"python", "node"}:
-            return False, f"Secure multi-file mode supports Python and Node.js only, not {target_runtime!r}."
+            return (
+                False,
+                f"Secure multi-file mode supports Python and Node.js only, not {target_runtime!r}.",
+            )
         if not re.fullmatch(r"[0-9]+(?:[kmg])", memory_limit.lower()):
             return False, "Invalid memory limit."
         if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(cpu_limit)):
@@ -498,7 +621,10 @@ class CodeExecutionSandbox:
             return False, "Resource limit outside permitted bounds."
         engine = shutil.which("docker") or shutil.which("podman")
         if not engine:
-            return False, "Secure project execution unavailable: install Docker or Podman; unsafe host fallback is disabled."
+            return (
+                False,
+                "Secure project execution unavailable: install Docker or Podman; unsafe host fallback is disabled.",
+            )
         selected_image = "python:3.12-alpine" if target_runtime == "python" else "node:22-alpine"
         with tempfile.TemporaryDirectory(prefix="agentufo-project-") as tmpdir:
             base = Path(tmpdir).resolve()
@@ -512,23 +638,53 @@ class CodeExecutionSandbox:
                     if os.name != "nt":
                         os.chmod(target, 0o444)
                 if os.name != "nt":
-                    for directory in sorted((p for p in base.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+                    for directory in sorted(
+                        (p for p in base.rglob("*") if p.is_dir()),
+                        key=lambda p: len(p.parts),
+                        reverse=True,
+                    ):
                         os.chmod(directory, 0o555)
                     os.chmod(base, 0o555)
                 mount_path = str(base).replace("\\", "/") if os.name == "nt" else str(base)
-                command = [engine, "run", "--rm", "--pull=never", "--network=none", "--read-only",
-                    "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "--pids-limit", str(pids_limit),
-                    "--memory", memory_limit, "--cpus", str(cpu_limit), "--user", "65534:65534",
-                    "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m", "--mount",
-                    f"type=bind,src={mount_path},dst=/workspace,readonly", "--workdir", "/workspace",
-                    "--env", "PYTHONDONTWRITEBYTECODE=1", selected_image]
+                command = [
+                    engine,
+                    "run",
+                    "--rm",
+                    "--pull=never",
+                    "--network=none",
+                    "--read-only",
+                    "--cap-drop=ALL",
+                    "--security-opt=no-new-privileges:true",
+                    "--pids-limit",
+                    str(pids_limit),
+                    "--memory",
+                    memory_limit,
+                    "--cpus",
+                    str(cpu_limit),
+                    "--user",
+                    "65534:65534",
+                    "--tmpfs",
+                    "/tmp:rw,noexec,nosuid,size=32m",
+                    "--mount",
+                    f"type=bind,src={mount_path},dst=/workspace,readonly",
+                    "--workdir",
+                    "/workspace",
+                    "--env",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    selected_image,
+                ]
                 entry_in_container = "/workspace/" + entrypoint
-                command.extend(["python", "-B", entry_in_container] if target_runtime == "python" else ["node", entry_in_container])
+                command.extend(
+                    ["python", "-B", entry_in_container]
+                    if target_runtime == "python"
+                    else ["node", entry_in_container]
+                )
                 container_name = "agentufo-project-" + uuid.uuid4().hex[:16]
                 command[2:2] = ["--name", container_name]
                 captured = {"stdout": bytearray(), "stderr": bytearray()}
                 truncated = {"stdout": False, "stderr": False}
                 cap = max(512, output_limit_bytes // 2)
+
                 def drain(stream, key):
                     while True:
                         chunk = stream.read(4096)
@@ -539,46 +695,79 @@ class CodeExecutionSandbox:
                             captured[key].extend(chunk[:room])
                         if len(chunk) > max(0, room):
                             truncated[key] = True
+
                 process = None
                 try:
-                    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                               env=os.environ.copy())
-                    readers = [threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
-                               threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True)]
-                    for reader in readers: reader.start()
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=os.environ.copy(),
+                    )
+                    readers = [
+                        threading.Thread(
+                            target=drain, args=(process.stdout, "stdout"), daemon=True
+                        ),
+                        threading.Thread(
+                            target=drain, args=(process.stderr, "stderr"), daemon=True
+                        ),
+                    ]
+                    for reader in readers:
+                        reader.start()
                     try:
                         return_code = process.wait(timeout=self.timeout)
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait(timeout=2)
                         raise
-                    for reader in readers: reader.join(timeout=2)
+                    for reader in readers:
+                        reader.join(timeout=2)
                     stdout, stderr = bytes(captured["stdout"]), bytes(captured["stderr"])
                     combined = stdout + (b"\n" if stdout and stderr else b"") + stderr
                     output = combined.decode("utf-8", errors="replace")
-                    if return_code == 125 and (b"No such image" in combined or b"pull access" in combined):
-                        return False, f"Secure execution image {selected_image!r} is not available locally; pre-pull it explicitly."
+                    if return_code == 125 and (
+                        b"No such image" in combined or b"pull access" in combined
+                    ):
+                        return (
+                            False,
+                            f"Secure execution image {selected_image!r} is not available locally; pre-pull it explicitly.",
+                        )
                     if any(truncated.values()):
                         output += "\n[output truncated]"
                     return return_code == 0, output
                 except subprocess.TimeoutExpired:
                     return False, f"Secure project execution timed out after {self.timeout}s."
                 except OSError as exc:
-                    return False, f"Could not start secure container runtime: {type(exc).__name__}: {exc}"
+                    return (
+                        False,
+                        f"Could not start secure container runtime: {type(exc).__name__}: {exc}",
+                    )
                 finally:
                     try:
-                        subprocess.run([engine, "rm", "-f", container_name], stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, timeout=3, check=False,
-                            env=os.environ.copy())
+                        subprocess.run(
+                            [engine, "rm", "-f", container_name],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            timeout=3,
+                            check=False,
+                            env=os.environ.copy(),
+                        )
                     except Exception:
                         pass
             except OSError as exc:
-                return False, f"Could not stage project for secure execution: {type(exc).__name__}: {exc}"
+                return (
+                    False,
+                    f"Could not stage project for secure execution: {type(exc).__name__}: {exc}",
+                )
             finally:
                 # Restore staging permissions so TemporaryDirectory cleanup works on POSIX.
                 if os.name != "nt":
                     try:
-                        for directory in sorted((p for p in base.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+                        for directory in sorted(
+                            (p for p in base.rglob("*") if p.is_dir()),
+                            key=lambda p: len(p.parts),
+                            reverse=True,
+                        ):
                             os.chmod(directory, 0o755)
                         os.chmod(base, 0o755)
                     except OSError:
@@ -590,27 +779,47 @@ class CodeExecutionSandbox:
         clean_low = clean.lower()
         logs: List[str] = []
 
-        if not ("<html" in clean_low or "<!doctype" in clean_low or "<div" in clean_low or "<canvas" in clean_low):
+        if not (
+            "<html" in clean_low
+            or "<!doctype" in clean_low
+            or "<div" in clean_low
+            or "<canvas" in clean_low
+        ):
             return False, "HTML Validation Failed: No HTML or DOM root tags found."
 
         logs.append("HTML/DOM root markers detected; structural completeness is not yet proven.")
         if "<canvas" in clean_low:
             logs.append("Canvas 2D render surface detected.")
         if "<script" in clean_low and "</script>" in clean_low:
-            logs.append("Embedded JavaScript script block detected; syntax/runtime status is checked separately when tooling is available.")
+            logs.append(
+                "Embedded JavaScript script block detected; syntax/runtime status is checked separately when tooling is available."
+            )
             # Check script blocks for obvious syntax errors via node or py ast if python
-            scripts = re.findall(r'<script[^>]*>(.*?)</script>', html_content, re.DOTALL | re.IGNORECASE)
+            scripts = re.findall(
+                r"<script[^>]*>(.*?)</script>", html_content, re.DOTALL | re.IGNORECASE
+            )
             node_bin = shutil.which("node")
             if node_bin:
                 for idx, sc in enumerate(scripts, start=1):
                     if sc.strip():
-                        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as f:
+                        with tempfile.NamedTemporaryFile(
+                            "w", suffix=".js", delete=False, encoding="utf-8"
+                        ) as f:
                             f.write(sc)
                             temp_js = f.name
                         try:
-                            res = subprocess.run([node_bin, "--check", temp_js], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2.0)
+                            res = subprocess.run(
+                                [node_bin, "--check", temp_js],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                timeout=2.0,
+                            )
                             if res.returncode != 0:
-                                return False, f"HTML <script> Block #{idx} Syntax Error:\n{res.stderr}"
+                                return (
+                                    False,
+                                    f"HTML <script> Block #{idx} Syntax Error:\n{res.stderr}",
+                                )
                             logs.append(f"Script block #{idx} passed JavaScript syntax check.")
                         except Exception:
                             pass

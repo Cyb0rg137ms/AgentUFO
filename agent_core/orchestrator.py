@@ -1,7 +1,7 @@
 """
 orchestrator.py
 ===============
-Coordinates the agentic coding loop: Coder, Tester, and Reviewer interaction 
+Coordinates the agentic coding loop: Coder, Tester, and Reviewer interaction
 with sandbox code execution.
 Enhanced with Claude-Lightyear v10.0 Ultra / LOGOS cognitive architecture support,
 allowing dynamic NAS topology selection, horizontal pondering, and universal LLM execution.
@@ -9,10 +9,11 @@ allowing dynamic NAS topology selection, horizontal pondering, and universal LLM
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
-from agent_core.agents import CoderAgent, TesterAgent, ReviewerAgent
-from agent_core.sandbox import CodeExecutionSandbox
+from typing import Any, Dict, Optional
+
+from agent_core.agents import CoderAgent, ReviewerAgent, TesterAgent
 from agent_core.llm.base import BaseLLMProvider
+from agent_core.sandbox import CodeExecutionSandbox
 
 
 class AgenticIDEOrchestrator:
@@ -43,9 +44,9 @@ class AgenticIDEOrchestrator:
 
     def _init_logos(self) -> None:
         from agent_core.logos.decomposition import MasterIndexDecomposer
+        from agent_core.logos.holographic_memory import HolographicMemoryEngine
         from agent_core.logos.nas_topology import NASTopologyEngine
         from agent_core.logos.pondering_engine import PonderingEngine
-        from agent_core.logos.holographic_memory import HolographicMemoryEngine
 
         self._logos_decomposer = MasterIndexDecomposer()
         self._logos_nas = NASTopologyEngine()
@@ -61,10 +62,10 @@ class AgenticIDEOrchestrator:
         4. Sandbox executes test script.
         5. If tests fail, Coder receives logs to debug/fix. Loop retries.
         6. If tests pass, Reviewer audits code.
-        
+
         Args:
             task: Task description.
-            
+
         Returns:
             Dictionary with final code, execution logs, and compilation status.
         """
@@ -87,7 +88,9 @@ class AgenticIDEOrchestrator:
                 "summary": pondering.synthesis_summary,
             }
             print(f"[ORCHESTRATOR] NAS selected topology: '{topology_name}'")
-            print(f"[ORCHESTRATOR] Pondering: {pondering.qualified_properties_count} heuristic scores met the configured threshold; this is not formal verification.")
+            print(
+                f"[ORCHESTRATOR] Pondering: {pondering.qualified_properties_count} heuristic scores met the configured threshold; this is not formal verification."
+            )
 
         # Step 1: Initial draft generation
         code = self.coder.generate_code(task)
@@ -118,7 +121,7 @@ class AgenticIDEOrchestrator:
                     result["logos_telemetry"] = logos_telemetry
                 return result
             else:
-                print(f"[ORCHESTRATOR] Test failed. Capturing execution error logs...")
+                print("[ORCHESTRATOR] Test failed. Capturing execution error logs...")
                 error_logs = logs
                 # Feed error logs back to coder for repair
                 code = self.coder.generate_code(task, error_logs)

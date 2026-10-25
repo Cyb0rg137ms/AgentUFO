@@ -21,26 +21,25 @@ Implements an OpenAI function-calling compatible tool system:
 from __future__ import annotations
 
 import ast
-import json
 import os
 import re
-import sys
+import subprocess
 import time
 import urllib.parse
 import urllib.request
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 
 # ---------------------------------------------------------------------------
 # Tool result container
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ToolResult:
     """Structured result from a tool call."""
+
     tool_name: str
     success: bool
     output: str
@@ -67,6 +66,7 @@ class ToolResult:
 # Base tool
 # ---------------------------------------------------------------------------
 
+
 class BaseTool:
     """Abstract base for all agent tools."""
 
@@ -90,11 +90,14 @@ class BaseTool:
 # File & Directory Tools
 # ---------------------------------------------------------------------------
 
+
 class FileReadTool(BaseTool):
     """Reads the content of a file at a given path with optional line ranges."""
 
     name = "file_read"
-    description = "Read the contents of a text file. Supports optional start_line and end_line parameters."
+    description = (
+        "Read the contents of a text file. Supports optional start_line and end_line parameters."
+    )
     schema = {
         "type": "object",
         "properties": {
@@ -149,7 +152,10 @@ class FileReadTool(BaseTool):
             all_lines = content.splitlines(keepends=True)
 
             if len(all_lines) > max_lines:
-                output = "".join(all_lines[:max_lines]) + f"\n[... truncated {len(all_lines) - max_lines} lines ...]"
+                output = (
+                    "".join(all_lines[:max_lines])
+                    + f"\n[... truncated {len(all_lines) - max_lines} lines ...]"
+                )
             elif start_line is not None or end_line is not None:
                 start = max(0, (start_line or 1) - 1)
                 end = end_line if end_line is not None else len(all_lines)
@@ -179,7 +185,9 @@ class FileWriteTool(BaseTool):
     """Writes content to a file at a given path, creating directories as needed."""
 
     name = "file_write"
-    description = "Write text content to a file. Automatically creates any missing parent directories."
+    description = (
+        "Write text content to a file. Automatically creates any missing parent directories."
+    )
     schema = {
         "type": "object",
         "properties": {
@@ -251,7 +259,9 @@ class FileListTool(BaseTool):
         },
     }
 
-    def execute(self, directory: str = ".", recursive: bool = False, max_items: int = 100) -> ToolResult:
+    def execute(
+        self, directory: str = ".", recursive: bool = False, max_items: int = 100
+    ) -> ToolResult:
         t0 = time.perf_counter()
         try:
             target = Path(directory).resolve()
@@ -269,7 +279,10 @@ class FileListTool(BaseTool):
             count = 0
             for p in iterator:
                 # Skip hidden/cache folders
-                if any(part.startswith(".") or part in ("node_modules", "__pycache__", "venv") for part in p.parts):
+                if any(
+                    part.startswith(".") or part in ("node_modules", "__pycache__", "venv")
+                    for part in p.parts
+                ):
                     continue
                 count += 1
                 if count > max_items:
@@ -328,7 +341,9 @@ class FileSearchTool(BaseTool):
         "required": ["query"],
     }
 
-    def execute(self, query: str, directory: str = ".", file_pattern: str = "*", max_matches: int = 50) -> ToolResult:
+    def execute(
+        self, query: str, directory: str = ".", file_pattern: str = "*", max_matches: int = 50
+    ) -> ToolResult:
         t0 = time.perf_counter()
         try:
             target = Path(directory).resolve()
@@ -336,7 +351,10 @@ class FileSearchTool(BaseTool):
             pattern = re.compile(query, re.IGNORECASE)
 
             for p in target.rglob(file_pattern):
-                if any(part.startswith(".") or part in ("node_modules", "__pycache__", "venv") for part in p.parts):
+                if any(
+                    part.startswith(".") or part in ("node_modules", "__pycache__", "venv")
+                    for part in p.parts
+                ):
                     continue
                 if p.is_file():
                     try:
@@ -411,11 +429,14 @@ class DirectoryCreateTool(BaseTool):
 # Internet & Web Tools
 # ---------------------------------------------------------------------------
 
+
 class WebSearchTool(BaseTool):
     """Searches external web or algorithmic corpus for theorems, invariants, and specs."""
 
     name = "web_search"
-    description = "Search the web or knowledge corpus for algorithmic invariants, documentation, and specs."
+    description = (
+        "Search the web or knowledge corpus for algorithmic invariants, documentation, and specs."
+    )
     schema = {
         "type": "object",
         "properties": {
@@ -435,6 +456,7 @@ class WebSearchTool(BaseTool):
         t0 = time.perf_counter()
         try:
             from agent_core.logos.dynamic_retrieval import DynamicAxiomRetriever
+
             retriever = DynamicAxiomRetriever()
             results = retriever.search_duckduckgo(query, max_results=max_results)
             output_parts = [f"Found {len(results)} references:"]
@@ -461,7 +483,9 @@ class BrowserFetchTool(BaseTool):
     """Fetches a webpage URL and extracts clean readable markdown/text."""
 
     name = "browser_fetch"
-    description = "Fetch webpage content from a URL via HTTP request and return clean readable text."
+    description = (
+        "Fetch webpage content from a URL via HTTP request and return clean readable text."
+    )
     schema = {
         "type": "object",
         "properties": {
@@ -494,14 +518,19 @@ class BrowserFetchTool(BaseTool):
                 html_text = raw_bytes.decode(charset, errors="replace")
 
             # Strip script and style tags
-            clean = re.sub(r'<(script|style|noscript|header|footer|nav)[^>]*>.*?</\1>', ' ', html_text, flags=re.DOTALL | re.IGNORECASE)
+            clean = re.sub(
+                r"<(script|style|noscript|header|footer|nav)[^>]*>.*?</\1>",
+                " ",
+                html_text,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
             # Convert basic tags to whitespace / newlines
-            clean = re.sub(r'<br\s*/?>', '\n', clean, flags=re.IGNORECASE)
-            clean = re.sub(r'</?(p|div|h[1-6]|li|tr)[^>]*>', '\n', clean, flags=re.IGNORECASE)
-            clean = re.sub(r'<[^>]+>', ' ', clean)
+            clean = re.sub(r"<br\s*/?>", "\n", clean, flags=re.IGNORECASE)
+            clean = re.sub(r"</?(p|div|h[1-6]|li|tr)[^>]*>", "\n", clean, flags=re.IGNORECASE)
+            clean = re.sub(r"<[^>]+>", " ", clean)
             # Normalize whitespace
-            clean = re.sub(r'[ \t]+', ' ', clean)
-            clean = re.sub(r'\n\s*\n+', '\n\n', clean).strip()
+            clean = re.sub(r"[ \t]+", " ", clean)
+            clean = re.sub(r"\n\s*\n+", "\n\n", clean).strip()
 
             truncated = clean[:max_chars]
             if len(clean) > max_chars:
@@ -528,6 +557,7 @@ class BrowserFetchTool(BaseTool):
 # Multi-Language Sandbox Tool
 # ---------------------------------------------------------------------------
 
+
 class MultiLangSandboxTool(BaseTool):
     """Executes code across Python, JavaScript, TypeScript, PowerShell, or HTML."""
 
@@ -553,13 +583,22 @@ class MultiLangSandboxTool(BaseTool):
         "required": ["code"],
     }
 
-    def execute(self, code: str, runtime: str = "auto", filename: Optional[str] = None) -> ToolResult:
+    def execute(
+        self, code: str, runtime: str = "auto", filename: Optional[str] = None
+    ) -> ToolResult:
         t0 = time.perf_counter()
         try:
             from agent_core.sandbox import CodeExecutionSandbox
+
             sandbox = CodeExecutionSandbox(timeout_seconds=6.0)
             rt = None if runtime == "auto" else runtime
-            fn = filename or ("script.py" if rt == "python" else "script.js" if rt in ("node", "javascript") else "temp_script")
+            fn = filename or (
+                "script.py"
+                if rt == "python"
+                else "script.js"
+                if rt in ("node", "javascript")
+                else "temp_script"
+            )
             success, logs = sandbox.execute_script(code, filename=fn, runtime=rt)
             return ToolResult(
                 tool_name=self.name,
@@ -581,6 +620,7 @@ class MultiLangSandboxTool(BaseTool):
 # ---------------------------------------------------------------------------
 # Shell & Python Eval Tools
 # ---------------------------------------------------------------------------
+
 
 class ShellExecuteTool(BaseTool):
     """Executes a command line instruction inside a subprocess."""
@@ -616,7 +656,9 @@ class ShellExecuteTool(BaseTool):
         timeout_s: Optional[float] = None,
     ) -> ToolResult:
         t0 = time.perf_counter()
-        actual_timeout = timeout_s if timeout_s is not None else (timeout if timeout is not None else 10.0)
+        actual_timeout = (
+            timeout_s if timeout_s is not None else (timeout if timeout is not None else 10.0)
+        )
         actual_timeout = min(actual_timeout, self.MAX_TIMEOUT)
 
         # Host shell access is a privileged capability. Deny it unless an operator explicitly
@@ -706,10 +748,24 @@ class PythonEvalTool(BaseTool):
 
             safe_globals = {
                 "__builtins__": {},
-                "abs": abs, "round": round, "len": len, "min": min, "max": max,
-                "sum": sum, "range": range, "list": list, "dict": dict,
-                "set": set, "tuple": tuple, "str": str, "int": int, "float": float,
-                "bool": bool, "sorted": sorted, "enumerate": enumerate, "zip": zip,
+                "abs": abs,
+                "round": round,
+                "len": len,
+                "min": min,
+                "max": max,
+                "sum": sum,
+                "range": range,
+                "list": list,
+                "dict": dict,
+                "set": set,
+                "tuple": tuple,
+                "str": str,
+                "int": int,
+                "float": float,
+                "bool": bool,
+                "sorted": sorted,
+                "enumerate": enumerate,
+                "zip": zip,
                 "math": __import__("math"),
             }
             res = eval(compile(tree, "<expression>", "eval"), safe_globals)
@@ -733,6 +789,7 @@ class PythonEvalTool(BaseTool):
 # LOGOS Cognitive & Invariant Tools
 # ---------------------------------------------------------------------------
 
+
 class InvariantVerificationTool(BaseTool):
     """Verifies invariant adherence and boundary contracts on code."""
 
@@ -753,17 +810,28 @@ class InvariantVerificationTool(BaseTool):
         "required": ["code"],
     }
 
-    def execute(self, code: str = "", task_description: str = "invariant audit", propositions: Optional[List[str]] = None) -> ToolResult:
+    def execute(
+        self,
+        code: str = "",
+        task_description: str = "invariant audit",
+        propositions: Optional[List[str]] = None,
+    ) -> ToolResult:
         t0 = time.perf_counter()
         try:
             from agent_core.logos.recursive_auditor import RigorousAuditor
+
             auditor = RigorousAuditor()
             target_code = code if code else "\n".join(propositions or [])
             report = auditor.audit(target_code, task_description)
             out = (
                 f"Invariant Audit: {'PASS' if report.is_converged else 'ISSUES DETECTED'} (Score: {report.score}/10)\n"
-                f"Passed Invariants:\n" + "\n".join(f"  ✓ {p}" for p in report.passed_invariants) +
-                (f"\nDetected Issues:\n" + "\n".join(f"  ✗ {i}" for i in report.detected_issues) if report.detected_issues else "")
+                f"Passed Invariants:\n"
+                + "\n".join(f"  ✓ {p}" for p in report.passed_invariants)
+                + (
+                    "\nDetected Issues:\n" + "\n".join(f"  ✗ {i}" for i in report.detected_issues)
+                    if report.detected_issues
+                    else ""
+                )
             )
             return ToolResult(
                 tool_name=self.name,
@@ -803,11 +871,14 @@ class PonderingQueryTool(BaseTool):
         t0 = time.perf_counter()
         try:
             from agent_core.logos.pondering_engine import PonderingEngine
+
             engine = PonderingEngine()
             synthesis = engine.evaluate_multi_angle(task_description)
             lines = [synthesis.synthesis_summary, "\nQualified Properties (Confidence >= 95%):"]
             for p in synthesis.qualified_properties:
-                lines.append(f"  * [{p.name}] (heuristic score={p.confidence:.2f}, uncalibrated): {p.hypothesis}")
+                lines.append(
+                    f"  * [{p.name}] (heuristic score={p.confidence:.2f}, uncalibrated): {p.hypothesis}"
+                )
             return ToolResult(
                 tool_name=self.name,
                 success=True,
@@ -831,6 +902,7 @@ class PonderingQueryTool(BaseTool):
 # ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
+
 
 class ToolRegistry:
     """Registry of available tools, with lookup by name and schema export."""

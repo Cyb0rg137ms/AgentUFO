@@ -7,9 +7,9 @@ relying on an LLM provider or external network requests.
 """
 
 from __future__ import annotations
+
 import time
 from typing import Any, Dict, List
-
 
 SNAKE_GAME_HTML = """<!DOCTYPE html>
 <html lang="en">

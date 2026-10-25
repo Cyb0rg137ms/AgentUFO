@@ -16,8 +16,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ from agent_core.sandbox import CodeExecutionSandbox
 @dataclass
 class EmpiricalModelProfile:
     """Empirically verified profile of a model installed on the host."""
+
     model_name: str
     context_length: int
     parameter_size: str
@@ -74,7 +76,9 @@ class EmpiricalCapabilityProber:
     caching verification results to disk, and exercising veto authority.
     """
 
-    def __init__(self, workspace_root: Optional[Path] = None, host: str = "http://localhost:11434") -> None:
+    def __init__(
+        self, workspace_root: Optional[Path] = None, host: str = "http://localhost:11434"
+    ) -> None:
         self.workspace_root = workspace_root or Path.cwd()
         self.host = host.rstrip("/")
         self.cache_dir = self.workspace_root / ".agentufo"
@@ -129,6 +133,7 @@ class EmpiricalCapabilityProber:
             return self._profiles[model_name]
 
         import time
+
         t0 = time.perf_counter()
 
         # Step 1: Query model info via /api/show
@@ -139,7 +144,9 @@ class EmpiricalCapabilityProber:
         try:
             show_url = f"{self.host}/api/show"
             payload = json.dumps({"name": model_name}).encode("utf-8")
-            req = urllib.request.Request(show_url, data=payload, headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(
+                show_url, data=payload, headers={"Content-Type": "application/json"}
+            )
             with urllib.request.urlopen(req, timeout=2.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 details = data.get("details", {})
@@ -151,7 +158,11 @@ class EmpiricalCapabilityProber:
                 if ctx_match:
                     context_len = int(ctx_match.group(1))
                 else:
-                    context_len = 32768 if "qwen" in model_name.lower() or "deepseek" in model_name.lower() else 4096
+                    context_len = (
+                        32768
+                        if "qwen" in model_name.lower() or "deepseek" in model_name.lower()
+                        else 4096
+                    )
         except Exception:
             pass
 
@@ -160,13 +171,17 @@ class EmpiricalCapabilityProber:
         raw_output = ""
         try:
             gen_url = f"{self.host}/api/generate"
-            gen_payload = json.dumps({
-                "model": model_name,
-                "prompt": "Write a python function `def ping(): return 'pong'` inside a single markdown python code block.",
-                "stream": False,
-                "options": {"temperature": 0.0, "num_predict": 128},
-            }).encode("utf-8")
-            gen_req = urllib.request.Request(gen_url, data=gen_payload, headers={"Content-Type": "application/json"})
+            gen_payload = json.dumps(
+                {
+                    "model": model_name,
+                    "prompt": "Write a python function `def ping(): return 'pong'` inside a single markdown python code block.",
+                    "stream": False,
+                    "options": {"temperature": 0.0, "num_predict": 128},
+                }
+            ).encode("utf-8")
+            gen_req = urllib.request.Request(
+                gen_url, data=gen_payload, headers={"Content-Type": "application/json"}
+            )
             with urllib.request.urlopen(gen_req, timeout=5.0) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 raw_output = res_data.get("response", "")
@@ -181,17 +196,21 @@ class EmpiricalCapabilityProber:
         coding_passed = False
         fixture_code = ""
         try:
-            fix_payload = json.dumps({
-                "model": model_name,
-                "prompt": "Write ONLY the python function `def add(a: int, b: int) -> int: return a + b` without any explanation.",
-                "stream": False,
-                "options": {"temperature": 0.0, "num_predict": 128},
-            }).encode("utf-8")
-            fix_req = urllib.request.Request(gen_url, data=fix_payload, headers={"Content-Type": "application/json"})
+            fix_payload = json.dumps(
+                {
+                    "model": model_name,
+                    "prompt": "Write ONLY the python function `def add(a: int, b: int) -> int: return a + b` without any explanation.",
+                    "stream": False,
+                    "options": {"temperature": 0.0, "num_predict": 128},
+                }
+            ).encode("utf-8")
+            fix_req = urllib.request.Request(
+                gen_url, data=fix_payload, headers={"Content-Type": "application/json"}
+            )
             with urllib.request.urlopen(fix_req, timeout=5.0) as resp:
                 fix_data = json.loads(resp.read().decode("utf-8"))
                 fixture_code = fix_data.get("response", "")
-                
+
                 # Extract code block if fenced
                 if "```" in fixture_code:
                     match = re.search(r"```(?:python)?\s*([\s\S]*?)\s*```", fixture_code)
@@ -213,10 +232,14 @@ class EmpiricalCapabilityProber:
 
         if not coding_passed:
             vetoed = True
-            veto_reason = f"VETO: Model failed micro coding fixture execution assertion (add(2,3) != 5)."
+            veto_reason = (
+                "VETO: Model failed micro coding fixture execution assertion (add(2,3) != 5)."
+            )
         elif context_len < 4096:
             vetoed = True
-            veto_reason = f"VETO: Context window ({context_len}) is below minimum 4096 token threshold."
+            veto_reason = (
+                f"VETO: Context window ({context_len}) is below minimum 4096 token threshold."
+            )
 
         profile = EmpiricalModelProfile(
             model_name=model_name,
@@ -275,7 +298,9 @@ class EmpiricalCapabilityProber:
         NOT a static name lookup table.
         """
         self._load_cache()
-        models_to_rank = candidate_models if candidate_models is not None else list(self._profiles.keys())
+        models_to_rank = (
+            candidate_models if candidate_models is not None else list(self._profiles.keys())
+        )
         ranked = []
 
         for m_name in models_to_rank:
@@ -288,16 +313,18 @@ class EmpiricalCapabilityProber:
                     prof = None
 
             if not prof:
-                ranked.append({
-                    "model_name": m_name,
-                    "score": 10.0,
-                    "vetoed": False,
-                    "reason": "Unprobed (heuristic fallback)",
-                    "fenced_ok": False,
-                    "fixture_ok": False,
-                    "context_length": 4096,
-                    "latency_ms": 100.0,
-                })
+                ranked.append(
+                    {
+                        "model_name": m_name,
+                        "score": 10.0,
+                        "vetoed": False,
+                        "reason": "Unprobed (heuristic fallback)",
+                        "fenced_ok": False,
+                        "fixture_ok": False,
+                        "context_length": 4096,
+                        "latency_ms": 100.0,
+                    }
+                )
                 continue
 
             # Compute empirical hardware score
@@ -316,17 +343,19 @@ class EmpiricalCapabilityProber:
             if prof.vetoed:
                 score = -100.0
 
-            ranked.append({
-                "model_name": m_name,
-                "score": round(score, 1),
-                "vetoed": prof.vetoed,
-                "veto_reason": prof.veto_reason,
-                "fenced_ok": prof.fenced_emission_ok,
-                "fixture_ok": prof.coding_fixture_passed,
-                "context_length": prof.context_length,
-                "latency_ms": round(prof.response_latency_ms, 1),
-                "parameter_size": prof.parameter_size,
-            })
+            ranked.append(
+                {
+                    "model_name": m_name,
+                    "score": round(score, 1),
+                    "vetoed": prof.vetoed,
+                    "veto_reason": prof.veto_reason,
+                    "fenced_ok": prof.fenced_emission_ok,
+                    "fixture_ok": prof.coding_fixture_passed,
+                    "context_length": prof.context_length,
+                    "latency_ms": round(prof.response_latency_ms, 1),
+                    "parameter_size": prof.parameter_size,
+                }
+            )
 
         ranked.sort(key=lambda x: (not x["vetoed"], x["score"]), reverse=True)
         return ranked

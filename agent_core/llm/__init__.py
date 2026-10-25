@@ -7,17 +7,17 @@ Grok, Gemini, Kimi, MiniMax, Qwen).
 """
 
 from agent_core.llm.base import BaseLLMProvider, LLMResponse, UnavailableLLMProvider
-from agent_core.llm.ollama_provider import OllamaProvider
 from agent_core.llm.cloud_providers import (
-    OpenAICompatibleProvider,
     AnthropicProvider,
-    GrokProvider,
-    GeminiProvider,
     DeepSeekProvider,
+    GeminiProvider,
+    GrokProvider,
     KimiProvider,
     MiniMaxProvider,
+    OpenAICompatibleProvider,
     QwenProvider,
 )
+from agent_core.llm.ollama_provider import OllamaProvider
 from agent_core.llm.registry import LLMRegistry
 
 __all__ = [

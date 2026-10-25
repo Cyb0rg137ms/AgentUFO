@@ -3,21 +3,33 @@
 This is an application-layer authorization guard, not an OS security boundary.
 Use OS permissions and an isolated runtime for defense in depth.
 """
+
 from __future__ import annotations
+
 import fnmatch
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Callable
+
 
 class PermissionDenied(PermissionError):
     pass
+
 
 @dataclass(frozen=True)
 class WorkspacePolicy:
     root: Path
     read_globs: tuple[str, ...] = ("**", "*")
     write_globs: tuple[str, ...] = ("**", "*")
-    deny_globs: tuple[str, ...] = (".env", "**/.env", "**/.env.*", "**/.git/**", "**/id_rsa*", "**/*.pem", "**/*.key")
+    deny_globs: tuple[str, ...] = (
+        ".env",
+        "**/.env",
+        "**/.env.*",
+        "**/.git/**",
+        "**/id_rsa*",
+        "**/*.pem",
+        "**/*.key",
+    )
     allow_delete: bool = False
 
     def __post_init__(self) -> None:
@@ -43,11 +55,15 @@ class WorkspacePolicy:
             raise PermissionDenied(f"{operation.title()} access is not granted for {rel}")
         return target
 
+
 @dataclass
 class MCPToolPolicy:
     """Default-deny registry for tools that may read, mutate, or access networks."""
+
     allowed_tools: set[str] = field(default_factory=set)
-    approval_required: set[str] = field(default_factory=lambda: {"write_file", "delete_file", "shell", "network", "execute_code"})
+    approval_required: set[str] = field(
+        default_factory=lambda: {"write_file", "delete_file", "shell", "network", "execute_code"}
+    )
     denied_tools: set[str] = field(default_factory=set)
 
     def authorize(self, tool_name: str, *, approved: bool = False) -> None:
@@ -58,7 +74,9 @@ class MCPToolPolicy:
             raise PermissionDenied(f"MCP tool {tool_name!r} is explicitly denied")
         if tool_name not in self.allowed_tools:
             raise PermissionDenied(f"MCP tool {tool_name!r} is not allowlisted")
-        if (tool_name in self.approval_required or base_name in self.approval_required) and not approved:
+        if (
+            tool_name in self.approval_required or base_name in self.approval_required
+        ) and not approved:
             raise PermissionDenied(f"MCP tool {tool_name!r} requires explicit approval")
 
 
@@ -68,9 +86,10 @@ class AuthorizedMCPDispatcher:
     This helper is an enforcement point for integrations; callers should route every
     invocation through ``call`` instead of invoking handler functions directly.
     """
+
     def __init__(self, policy: MCPToolPolicy | None = None) -> None:
         self.policy = policy or MCPToolPolicy()
-        self._handlers: dict[str, object] = {}
+        self._handlers: dict[str, Callable[..., Any]] = {}
 
     def register(self, name: str, handler) -> None:
         if not name or not callable(handler):
@@ -97,6 +116,7 @@ class AuthorizedMCPClient:
     key before the network call is made. The adapter is intentionally fail-closed;
     do not expose the underlying client directly to agent code.
     """
+
     def __init__(self, call_tool, policy: MCPToolPolicy | None = None) -> None:
         if not callable(call_tool):
             raise TypeError("call_tool must be a callable MCP client operation")

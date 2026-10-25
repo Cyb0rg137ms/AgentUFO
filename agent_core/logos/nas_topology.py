@@ -19,17 +19,20 @@ from typing import Any, Dict, List, Optional
 
 
 class TopologyType(str, Enum):
-    LINEAR_PIPELINE = "linear_pipeline"           # Coder -> Tester -> Reviewer
-    TREE_OF_THOUGHT = "tree_of_thought"           # Multi-hypothesis parallel branching
-    DUAL_FRAMEWORK = "dual_framework"             # Classical vs Theory 2 Convergence
-    RECURSIVE_REFINEMENT = "recursive_refinement" # Successive space-reduction loop
-    ADAPTIVE_MESH = "adaptive_mesh"               # Dynamic LLM synthesized mesh
-    PARALLEL_FRACTAL_MESH = "parallel_fractal_mesh" # 2-layer parallel decomposition + 3-4 layer LLM combining
+    LINEAR_PIPELINE = "linear_pipeline"  # Coder -> Tester -> Reviewer
+    TREE_OF_THOUGHT = "tree_of_thought"  # Multi-hypothesis parallel branching
+    DUAL_FRAMEWORK = "dual_framework"  # Classical vs Theory 2 Convergence
+    RECURSIVE_REFINEMENT = "recursive_refinement"  # Successive space-reduction loop
+    ADAPTIVE_MESH = "adaptive_mesh"  # Dynamic LLM synthesized mesh
+    PARALLEL_FRACTAL_MESH = (
+        "parallel_fractal_mesh"  # 2-layer parallel decomposition + 3-4 layer LLM combining
+    )
 
 
 @dataclass
 class CognitiveTopology:
     """A synthesized execution topology for agent coordination."""
+
     topology_type: TopologyType
     stages: List[str]
     max_branch_factor: int = 1
@@ -68,7 +71,7 @@ class NASTopologyEngine:
     def evaluate_task_complexity(self, task_description: str) -> Dict[str, float]:
         """Calculates complexity dimensions for the task."""
         t_low = task_description.lower()
-        
+
         # Algorithmic ambiguity
         ambiguity = 0.2
         if any(w in t_low for w in ["optimal", "efficient", "heuristic", "search", "approximate"]):
@@ -105,11 +108,11 @@ class NASTopologyEngine:
         ]
         stages = topology.stages
         for i, s in enumerate(stages, start=1):
-            clean_s = re.sub(r'[^a-zA-Z0-9_]', '_', s)
+            clean_s = re.sub(r"[^a-zA-Z0-9_]", "_", s)
             node_id = f"S{i}[{s}]"
             lines.append(f"    {node_id}")
             if i < len(stages):
-                next_id = f"S{i+1}"
+                next_id = f"S{i + 1}"
                 lines.append(f"    S{i} -->|Holographic Memory Sync| {next_id}")
 
         last_id = f"S{len(stages)}"
@@ -126,18 +129,18 @@ class NASTopologyEngine:
         sec = float(metrics.get("security", 0.0))
         dep = float(metrics.get("structural_depth", 0.0))
         comp = float(metrics.get("composite_score", 0.0))
-        concurrency = max(1, min(8, round(2.0 + max(0.0, min(1.0, dep)) * 6.0)) )
+        concurrency = max(1, min(8, round(2.0 + max(0.0, min(1.0, dep)) * 6.0)))
         return [
             max(0.0, min(1.0, amb)),
             max(0.0, min(1.0, sec)),
             max(0.0, min(1.0, dep)),
             max(0.0, min(1.0, comp)),
             float(concurrency),
-            4.0,   # Number of configured abstraction scales in the current MERA prototype.
-            0.0,   # Memory retention effectiveness is not measured.
+            4.0,  # Number of configured abstraction scales in the current MERA prototype.
+            0.0,  # Memory retention effectiveness is not measured.
             0.95,  # Configured heuristic consensus threshold, not an empirical success rate.
-            0.0,   # Convergence rate is not measured.
-            0.0,   # AST verification fidelity is not measured by this topology engine.
+            0.0,  # Convergence rate is not measured.
+            0.0,  # AST verification fidelity is not measured by this topology engine.
         ]
 
     def search_optimal_topology(self, task_description: str) -> CognitiveTopology:
@@ -152,7 +155,21 @@ class NASTopologyEngine:
         comp = metrics["composite_score"]
 
         # Check if parallel fractal mesh requested or massive task
-        if any(w in t_low for w in ["parallel", "massive", "100m", "10m", "decomposed", "gta", "minecraft", "open world", "multi-module", "engine"]):
+        if any(
+            w in t_low
+            for w in [
+                "parallel",
+                "massive",
+                "100m",
+                "10m",
+                "decomposed",
+                "gta",
+                "minecraft",
+                "open world",
+                "multi-module",
+                "engine",
+            ]
+        ):
             top = CognitiveTopology(
                 topology_type=TopologyType.PARALLEL_FRACTAL_MESH,
                 stages=[
@@ -175,7 +192,11 @@ class NASTopologyEngine:
             return top
 
         # LLM-driven topology synthesis
-        if self.llm and hasattr(self.llm, "generate") and getattr(self.llm, "is_available", lambda: True)():
+        if (
+            self.llm
+            and hasattr(self.llm, "generate")
+            and getattr(self.llm, "is_available", lambda: True)()
+        ):
             try:
                 prompt = (
                     f"You are the LOGOS NAS Cognitive Topology Engine. Analyze this task:\n"
@@ -189,7 +210,7 @@ class NASTopologyEngine:
                 )
                 resp = self.llm.generate(prompt=prompt, max_tokens=10_000_000)
                 content = resp.content.strip() if hasattr(resp, "content") else str(resp).strip()
-                
+
                 stages = []
                 top_type = TopologyType.LINEAR_PIPELINE
                 consensus = 0.95

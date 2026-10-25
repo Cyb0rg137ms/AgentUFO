@@ -13,15 +13,13 @@ Enforces pre-run hard budgets:
 
 from __future__ import annotations
 
-import json
-import time
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 
 class BudgetCapExceededError(Exception):
     """Raised when a crew seat or the entire run exceeds its hard token budget."""
+
     pass
 
 
@@ -30,12 +28,14 @@ class LocalRuntimeUnavailableError(Exception):
     Raised when a seat configured for token-saving cannot reach the local runtime (Ollama).
     Prevents silent fallback that burns the user's paid cloud API tokens.
     """
+
     pass
 
 
 @dataclass
 class BudgetConfig:
     """Pre-run hard budget limits."""
+
     total_token_cap: int = 50_000
     planner_token_cap: int = 10_000
     per_seat_token_cap: int = 15_000
@@ -78,13 +78,21 @@ class HardBudgetGuard:
         self.is_halted: bool = False
         self.halt_reason: Optional[str] = None
 
-    def check_headroom(self, seat_id: str, is_planner: bool = False, estimated_tokens: int = 300, is_local_tier: bool = False) -> None:
+    def check_headroom(
+        self,
+        seat_id: str,
+        is_planner: bool = False,
+        estimated_tokens: int = 300,
+        is_local_tier: bool = False,
+    ) -> None:
         """
         Validates whether sufficient budget remains before initiating a model call.
         Raises BudgetCapExceededError immediately if caps are breached.
         """
         if self.is_halted:
-            raise BudgetCapExceededError(f"Run is halted due to budget exhaustion: {self.halt_reason}")
+            raise BudgetCapExceededError(
+                f"Run is halted due to budget exhaustion: {self.halt_reason}"
+            )
 
         # 1. Total run budget check
         if (self.total_tokens_used + estimated_tokens) > self.config.total_token_cap:
@@ -93,7 +101,10 @@ class HardBudgetGuard:
             raise BudgetCapExceededError(self.halt_reason)
 
         # 2. Planner cap check
-        if is_planner and (self.planner_tokens_used + estimated_tokens) > self.config.planner_token_cap:
+        if (
+            is_planner
+            and (self.planner_tokens_used + estimated_tokens) > self.config.planner_token_cap
+        ):
             self.is_halted = True
             self.halt_reason = f"Planner token cap exceeded: {self.planner_tokens_used} / {self.config.planner_token_cap}"
             raise BudgetCapExceededError(self.halt_reason)

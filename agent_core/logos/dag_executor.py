@@ -3,6 +3,7 @@
 Independent ready nodes run concurrently; dependent nodes become eligible as soon as
 all dependencies finish. Invalid graphs never execute any work.
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -36,10 +37,18 @@ class DAGTaskNode:
     finished_at: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"id": self.id, "name": self.name, "dependencies": sorted(self.dependencies),
-                "dependents": sorted(self.dependents), "status": self.status.value,
-                "layer": self.layer, "has_result": self.result is not None, "error": self.error,
-                "started_at": self.started_at, "finished_at": self.finished_at}
+        return {
+            "id": self.id,
+            "name": self.name,
+            "dependencies": sorted(self.dependencies),
+            "dependents": sorted(self.dependents),
+            "status": self.status.value,
+            "layer": self.layer,
+            "has_result": self.result is not None,
+            "error": self.error,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
 
 
 class DAGValidationError(ValueError):
@@ -50,8 +59,14 @@ class DependencyDAG:
     def __init__(self) -> None:
         self.nodes: Dict[str, DAGTaskNode] = {}
 
-    def add_task(self, task_id: str, name: str, payload: Any,
-                 dependencies: Optional[List[str]] = None, layer: int = 1) -> DAGTaskNode:
+    def add_task(
+        self,
+        task_id: str,
+        name: str,
+        payload: Any,
+        dependencies: Optional[List[str]] = None,
+        layer: int = 1,
+    ) -> DAGTaskNode:
         if not task_id or task_id in self.nodes:
             raise DAGValidationError(f"Task id must be non-empty and unique: {task_id!r}")
         deps = set(dependencies or [])
@@ -68,7 +83,9 @@ class DependencyDAG:
         return node
 
     def validate(self) -> List[List[DAGTaskNode]]:
-        unknown = {dep for n in self.nodes.values() for dep in n.dependencies if dep not in self.nodes}
+        unknown = {
+            dep for n in self.nodes.values() for dep in n.dependencies if dep not in self.nodes
+        }
         if unknown:
             raise DAGValidationError("Unknown dependency IDs: " + ", ".join(sorted(unknown)))
         degree = {nid: len(node.dependencies) for nid, node in self.nodes.items()}
@@ -114,8 +131,10 @@ class DependencyDAG:
         node.status, node.error, node.finished_at = TaskStatus.FAILED, error[:4000], time.time()
 
     def is_finished(self) -> bool:
-        return all(n.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED)
-                   for n in self.nodes.values())
+        return all(
+            n.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED)
+            for n in self.nodes.values()
+        )
 
     def compute_antichains(self) -> List[List[DAGTaskNode]]:
         return self.validate()
@@ -123,6 +142,7 @@ class DependencyDAG:
 
 class AntichainParallelExecutor:
     """Run DAG nodes concurrently up to ``max_workers`` with dependency-aware scheduling."""
+
     def __init__(self, max_workers: int = 4, trace: Optional[Any] = None) -> None:
         if max_workers < 1:
             raise ValueError("max_workers must be >= 1")
@@ -136,17 +156,21 @@ class AntichainParallelExecutor:
             except Exception:
                 pass  # Trace storage failure must not corrupt scheduler state.
 
-    def execute_dag(self, dag: DependencyDAG, worker_fn: Callable[[DAGTaskNode], Any],
-                    progress_callback: Optional[Callable[[DAGTaskNode, int, int], None]] = None
-                    ) -> Dict[str, Any]:
+    def execute_dag(
+        self,
+        dag: DependencyDAG,
+        worker_fn: Callable[[DAGTaskNode], Any],
+        progress_callback: Optional[Callable[[DAGTaskNode, int, int], None]] = None,
+    ) -> Dict[str, Any]:
         # Validate before running a single task; do not silently break cycles.
         dag.validate()
         total = len(dag.nodes)
         completed = 0
         results: Dict[str, Any] = {}
         running: Dict[concurrent.futures.Future[Any], DAGTaskNode] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers,
-                                                   thread_name_prefix="agentufo-worker") as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.max_workers, thread_name_prefix="agentufo-worker"
+        ) as pool:
             while True:
                 # A failed prerequisite blocks all descendants rather than executing them.
                 changed = True
@@ -174,25 +198,39 @@ class AntichainParallelExecutor:
                     self._emit("task.started", node, dependencies=sorted(node.dependencies))
                     running[pool.submit(worker_fn, node)] = node
                 if not running:
-                    if all(n.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED)
-                           for n in dag.nodes.values()):
+                    if all(
+                        n.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.BLOCKED)
+                        for n in dag.nodes.values()
+                    ):
                         break
                     # This should only be reachable if graph state was externally corrupted.
                     pending = [n.id for n in dag.nodes.values() if n.status == TaskStatus.PENDING]
-                    raise DAGValidationError("Scheduler deadlock; pending tasks: " + ", ".join(pending))
-                done, _ = concurrent.futures.wait(running, return_when=concurrent.futures.FIRST_COMPLETED)
+                    raise DAGValidationError(
+                        "Scheduler deadlock; pending tasks: " + ", ".join(pending)
+                    )
+                done, _ = concurrent.futures.wait(
+                    running, return_when=concurrent.futures.FIRST_COMPLETED
+                )
                 for future in done:
                     node = running.pop(future)
                     completed += 1
                     try:
                         result = future.result()
                         dag.mark_completed(node.id, result)
-                        self._emit("task.completed", node, duration_ms=round((node.finished_at - node.started_at) * 1000, 3))
+                        self._emit(
+                            "task.completed",
+                            node,
+                            duration_ms=round((node.finished_at - node.started_at) * 1000, 3),
+                        )
                         results[node.id] = result
                     except Exception as exc:
                         dag.mark_failed(node.id, f"{type(exc).__name__}: {exc}")
-                        self._emit("task.failed", node, error=node.error,
-                                   duration_ms=round((node.finished_at - node.started_at) * 1000, 3))
+                        self._emit(
+                            "task.failed",
+                            node,
+                            error=node.error,
+                            duration_ms=round((node.finished_at - node.started_at) * 1000, 3),
+                        )
                         results[node.id] = None
                     if progress_callback:
                         try:

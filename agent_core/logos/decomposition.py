@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 @dataclass
 class Subquestion:
     """A decomposed subquestion representing an angle of inquiry."""
+
     id: str
     dimension: str
     question: str
@@ -106,9 +107,27 @@ class MasterIndexDecomposer:
                 return True
 
         # Check if response is purely generic advice without code or actionable architectural specifications
-        has_spec = any(w in t_low for w in ["def ", "class ", "interface", "function", "module", "step 1", "component", "subsystem", "algorithm", "contract:"])
+        has_spec = any(
+            w in t_low
+            for w in [
+                "def ",
+                "class ",
+                "interface",
+                "function",
+                "module",
+                "step 1",
+                "component",
+                "subsystem",
+                "algorithm",
+                "contract:",
+            ]
+        )
         lines = [l.strip() for l in text.splitlines() if l.strip()]
-        if len(lines) < 3 and not has_spec and any(w in t_low for w in ["guidance", "tips", "consider", "suggest"]):
+        if (
+            len(lines) < 3
+            and not has_spec
+            and any(w in t_low for w in ["guidance", "tips", "consider", "suggest"])
+        ):
             return True
 
         return False
@@ -118,7 +137,11 @@ class MasterIndexDecomposer:
         Transforms generic hedging or 'impossible' claims into concrete, actionable engineering requirements.
         Generically instructs the LLM to specify everything needed to execute the prompt without declaring impossibility.
         """
-        if not self.llm or not hasattr(self.llm, "generate") or not getattr(self.llm, "is_available", lambda: True)():
+        if (
+            not self.llm
+            or not hasattr(self.llm, "generate")
+            or not getattr(self.llm, "is_available", lambda: True)()
+        ):
             return (
                 f"Actionable Implementation Blueprint for '{task}':\n"
                 "1. Core State & Data Representation\n"
@@ -169,14 +192,20 @@ class MasterIndexDecomposer:
             "Specify the highest-standard modular architecture, state invariants, zero-latency algorithms, and execution strategy."
         )
         response_text = ""
-        if self.llm and hasattr(self.llm, "generate") and getattr(self.llm, "is_available", lambda: True)():
+        if (
+            self.llm
+            and hasattr(self.llm, "generate")
+            and getattr(self.llm, "is_available", lambda: True)()
+        ):
             try:
                 resp = self.llm.generate(
                     prompt=exploration_query,
                     system_prompt="You are a Frontier Systems Architect designing state-of-the-art solutions. Detail the most impressive executable architecture.",
                     max_tokens=10_000_000,
                 )
-                response_text = resp.content.strip() if hasattr(resp, "content") else str(resp).strip()
+                response_text = (
+                    resp.content.strip() if hasattr(resp, "content") else str(resp).strip()
+                )
             except Exception:
                 response_text = ""
 
@@ -208,7 +237,7 @@ class MasterIndexDecomposer:
         layer1_subqs = self.decompose(root_actionable)
         for idx, sq in enumerate(layer1_subqs):
             sq.layer = 1
-            sq.id = f"L1-SQ-{idx+1}"
+            sq.id = f"L1-SQ-{idx + 1}"
 
         tree: Dict[str, List[Subquestion]] = {}
         all_layers: Dict[int, List[Subquestion]] = {1: layer1_subqs}
@@ -217,24 +246,28 @@ class MasterIndexDecomposer:
         for depth in range(2, max_depth + 1):
             next_level_nodes: List[Subquestion] = []
 
-            def _decompose_single_parent(parent_sq: Subquestion) -> Tuple[Subquestion, List[Subquestion]]:
+            def _decompose_single_parent(
+                parent_sq: Subquestion,
+            ) -> Tuple[Subquestion, List[Subquestion]]:
                 sub_prompt = parent_sq.question
                 p_actionable = self.explore_impressive_execution(sub_prompt)
                 raw_children = self.decompose(p_actionable)
                 chosen = raw_children
                 c_nodes: List[Subquestion] = []
                 for c_idx, c_sq in enumerate(chosen):
-                    c_sq.layer = depth
+                    c_sq.layer = depth  # noqa: B023 - map() completes inside this loop iteration
                     c_sq.parent_id = parent_sq.id
-                    c_sq.id = f"{parent_sq.id}-L{depth}-{c_idx+1}"
+                    c_sq.id = f"{parent_sq.id}-L{depth}-{c_idx + 1}"  # noqa: B023
                     # Inherit parent dependency or link to previous sibling
                     if c_idx > 0:
-                        c_sq.dependencies = [f"{parent_sq.id}-L{depth}-{c_idx}"]
+                        c_sq.dependencies = [f"{parent_sq.id}-L{depth}-{c_idx}"]  # noqa: B023
                     c_nodes.append(c_sq)
                 return parent_sq, c_nodes
 
             # PARALLEL DECOMPOSITION ACROSS ALL PARENT SUBTASKS
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, max(1, len(current_parents)))) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(max_workers, max(1, len(current_parents)))
+            ) as executor:
                 futures = [executor.submit(_decompose_single_parent, p) for p in current_parents]
                 for fut in concurrent.futures.as_completed(futures):
                     p_node, c_nodes = fut.result()
@@ -249,6 +282,7 @@ class MasterIndexDecomposer:
 
         # Build DependencyDAG
         from agent_core.logos.dag_executor import DependencyDAG
+
         dag = DependencyDAG()
         for layer_num, sq_list in all_layers.items():
             for sq in sq_list:
@@ -284,7 +318,11 @@ class MasterIndexDecomposer:
         task_clean = meta_task.strip()
 
         # Dynamic LLM cognitive decomposition
-        if self.llm and hasattr(self.llm, "generate") and getattr(self.llm, "is_available", lambda: True)():
+        if (
+            self.llm
+            and hasattr(self.llm, "generate")
+            and getattr(self.llm, "is_available", lambda: True)()
+        ):
             try:
                 system_prompt = (
                     "You are the LOGOS Meta-Architecture Engine. Dynamically break down the user's task into "
@@ -310,15 +348,17 @@ class MasterIndexDecomposer:
                 if isinstance(parsed, list) and len(parsed) >= 1:
                     subqs = []
                     for item in parsed:
-                        subqs.append(Subquestion(
-                            id=item.get("id", f"SQ-{len(subqs)+1}"),
-                            dimension=item.get("dimension", "Architectural Invariant"),
-                            question=item.get("question", task_clean),
-                            dependencies=item.get("dependencies", []),
-                            priority=int(item.get("priority", 1)),
-                            confidence=max(0.0, min(1.0, float(item.get("confidence", 0.0)))),
-                            findings=item.get("findings", ""),
-                        ))
+                        subqs.append(
+                            Subquestion(
+                                id=item.get("id", f"SQ-{len(subqs) + 1}"),
+                                dimension=item.get("dimension", "Architectural Invariant"),
+                                question=item.get("question", task_clean),
+                                dependencies=item.get("dependencies", []),
+                                priority=int(item.get("priority", 1)),
+                                confidence=max(0.0, min(1.0, float(item.get("confidence", 0.0)))),
+                                findings=item.get("findings", ""),
+                            )
+                        )
                     if subqs:
                         return subqs
             except Exception:
@@ -407,8 +447,8 @@ class MasterIndexDecomposer:
         """Generates a Mermaid UML sequence / dependency diagram for the decomposed task."""
         lines = ["graph TD"]
         for sq in subquestions:
-            clean_dim = re.sub(r'[^a-zA-Z0-9 _-]', '', sq.dimension)
-            clean_q = re.sub(r'[^a-zA-Z0-9 _-]', '', sq.question)[:35]
+            clean_dim = re.sub(r"[^a-zA-Z0-9 _-]", "", sq.dimension)
+            clean_q = re.sub(r"[^a-zA-Z0-9 _-]", "", sq.question)[:35]
             lines.append(f'    {sq.id}["<b>{sq.id}</b>: {clean_dim}<br/><i>{clean_q}...</i>"]')
             for dep in sq.dependencies:
                 lines.append(f"    {dep} --> {sq.id}")
@@ -419,9 +459,11 @@ class MasterIndexDecomposer:
 # Dynamic Blueprint Engine & Architectural Decompositions
 # =======================================================================
 
+
 @dataclass
 class BlueprintComponent:
     """A modular component in the architectural layout todo list."""
+
     id: str
     name: str
     subsystem: str
@@ -447,6 +489,7 @@ class BlueprintComponent:
 @dataclass
 class ArchitectureBlueprint:
     """Master Architectural Blueprint and Component Todo Breakdown."""
+
     meta_task: str
     topology: str
     system_layout: str
@@ -504,7 +547,11 @@ class BlueprintEngine:
         ]
 
         # 1. Dynamic LLM synthesis
-        if self.llm and hasattr(self.llm, "generate") and getattr(self.llm, "is_available", lambda: True)():
+        if (
+            self.llm
+            and hasattr(self.llm, "generate")
+            and getattr(self.llm, "is_available", lambda: True)()
+        ):
             try:
                 system_prompt = (
                     "You are the Principal Systems Architect. Decompose the user's task into an unconstrained, "
@@ -529,7 +576,8 @@ class BlueprintEngine:
                     "}"
                 )
                 resp = self.llm.generate(
-                    prompt=f"TARGET TASK:\n{task_clean}\n\nTOPOLOGY: {topology_type}\nKNOWN INVARIANTS:\n" + "\n".join(f"- {i}" for i in active_invariants),
+                    prompt=f"TARGET TASK:\n{task_clean}\n\nTOPOLOGY: {topology_type}\nKNOWN INVARIANTS:\n"
+                    + "\n".join(f"- {i}" for i in active_invariants),
                     system_prompt=system_prompt,
                     temperature=0.1,
                     max_tokens=10_000_000,
@@ -541,20 +589,29 @@ class BlueprintEngine:
                     text = text.split("```")[1].split("```")[0].strip()
 
                 parsed = json.loads(text)
-                if isinstance(parsed, dict) and "components" in parsed and len(parsed["components"]) > 0:
+                if (
+                    isinstance(parsed, dict)
+                    and "components" in parsed
+                    and len(parsed["components"]) > 0
+                ):
                     comps = []
                     for idx, c in enumerate(parsed["components"]):
-                        comps.append(BlueprintComponent(
-                            id=c.get("id", f"comp_{idx+1:02d}"),
-                            name=c.get("name", f"Component {idx+1}"),
-                            subsystem=c.get("subsystem", "Core Subsystem"),
-                            purpose=c.get("purpose", ""),
-                            contract=c.get("contract", ""),
-                            dependencies=c.get("dependencies", []),
-                            invariant_guard=c.get("invariant_guard", ""),
-                        ))
+                        comps.append(
+                            BlueprintComponent(
+                                id=c.get("id", f"comp_{idx + 1:02d}"),
+                                name=c.get("name", f"Component {idx + 1}"),
+                                subsystem=c.get("subsystem", "Core Subsystem"),
+                                purpose=c.get("purpose", ""),
+                                contract=c.get("contract", ""),
+                                dependencies=c.get("dependencies", []),
+                                invariant_guard=c.get("invariant_guard", ""),
+                            )
+                        )
                     subsystems = parsed.get("subsystems") or list({c.subsystem for c in comps})
-                    layout = parsed.get("system_layout") or f"Dynamic Modular Architecture for {task_clean[:60]}"
+                    layout = (
+                        parsed.get("system_layout")
+                        or f"Dynamic Modular Architecture for {task_clean[:60]}"
+                    )
                     invs = parsed.get("global_invariants") or active_invariants
                     return ArchitectureBlueprint(
                         meta_task=task_clean,
@@ -569,38 +626,199 @@ class BlueprintEngine:
 
         # 2. Dynamic Fallback Generation
         t_low = task_clean.lower()
-        is_interactive = any(w in t_low for w in ["game", "canvas", "temple run", "flappy", "tetris", "pong", "play", "interactive", "animation"])
-        is_math = any(w in t_low for w in ["divide", "matrix", "vector", "sort", "algorithm", "fibonacci", "prime", "math", "quicksort"])
+        is_interactive = any(
+            w in t_low
+            for w in [
+                "game",
+                "canvas",
+                "temple run",
+                "flappy",
+                "tetris",
+                "pong",
+                "play",
+                "interactive",
+                "animation",
+            ]
+        )
+        is_math = any(
+            w in t_low
+            for w in [
+                "divide",
+                "matrix",
+                "vector",
+                "sort",
+                "algorithm",
+                "fibonacci",
+                "prime",
+                "math",
+                "quicksort",
+            ]
+        )
 
         if is_interactive:
             layout = "Dynamic Interactive Canvas & Animation Loop Architecture"
-            subsystems = ["Lifecycle Engine", "Canvas Renderer", "Player Entity & State Kinematics", "Obstacle Spawner & Procedural Generation", "Collision Boundary & AABB Invariant", "Score & HUD", "Controls Dispatcher"]
+            subsystems = [
+                "Lifecycle Engine",
+                "Canvas Renderer",
+                "Player Entity & State Kinematics",
+                "Obstacle Spawner & Procedural Generation",
+                "Collision Boundary & AABB Invariant",
+                "Score & HUD",
+                "Controls Dispatcher",
+            ]
             components = [
-                BlueprintComponent(id="comp_01_loop", name="Game Loop & Lifecycle Clock", subsystem="Lifecycle Engine", purpose="Frame tick clock, state machine transitions, and timing synchronization.", contract="init(), start(), loop(timestamp), stop()", invariant_guard="Strict delta-time clamping preventing frame jumps."),
-                BlueprintComponent(id="comp_02_canvas", name="Dynamic Canvas Renderer", subsystem="Canvas Renderer", purpose="Double-buffered 2D canvas drawing with viewport scaling and particle effects.", contract="render(state), clear(), resize()", dependencies=["comp_01_loop"], invariant_guard="All draw operations strictly bounded within viewport dimensions."),
-                BlueprintComponent(id="comp_03_player", name="Player Entity & State Kinematics", subsystem="Player Entity & State Kinematics", purpose="Position, velocity, acceleration, jump/action kinetics, and bounds.", contract="updatePlayer(dt), action()", dependencies=["comp_01_loop"], invariant_guard="Coordinate invariants clamped to playable zone boundaries."),
-                BlueprintComponent(id="comp_04_obstacles", name="Procedural Obstacle & Entity Spawner", subsystem="Obstacle Spawner & Procedural Generation", purpose="Spawns and manages procedural obstacles, items, and moving entities.", contract="spawn(), updateObstacles(dt)", dependencies=["comp_03_player"], invariant_guard="Deterministic obstacle intervals with fair passability guarantee."),
-                BlueprintComponent(id="comp_05_collision", name="AABB & Boundary Collision Detector", subsystem="Collision Boundary & AABB Invariant", purpose="Detects player intersections with obstacles, hazards, and track bounds.", contract="checkCollisions(player, obstacles) -> bool", dependencies=["comp_03_player", "comp_04_obstacles"], invariant_guard="Immediate state transition to game-over on collision."),
-                BlueprintComponent(id="comp_06_hud", name="Score, Stats & HUD Overlay", subsystem="Score & HUD", purpose="Renders score counters, level indicators, health bars, and restart modals.", contract="updateScore(delta), renderHUD()", dependencies=["comp_01_loop"], invariant_guard="Monotonically non-decreasing score during session."),
-                BlueprintComponent(id="comp_07_controls", name="Keyboard, Mouse & Touch Dispatcher", subsystem="Controls Dispatcher", purpose="Binds arrow keys, WASD, space, clicks, and touches with debouncing.", contract="bindControls(), onAction(e)", dependencies=["comp_03_player"], invariant_guard="Debounced inputs preventing concurrent direction conflicting events."),
+                BlueprintComponent(
+                    id="comp_01_loop",
+                    name="Game Loop & Lifecycle Clock",
+                    subsystem="Lifecycle Engine",
+                    purpose="Frame tick clock, state machine transitions, and timing synchronization.",
+                    contract="init(), start(), loop(timestamp), stop()",
+                    invariant_guard="Strict delta-time clamping preventing frame jumps.",
+                ),
+                BlueprintComponent(
+                    id="comp_02_canvas",
+                    name="Dynamic Canvas Renderer",
+                    subsystem="Canvas Renderer",
+                    purpose="Double-buffered 2D canvas drawing with viewport scaling and particle effects.",
+                    contract="render(state), clear(), resize()",
+                    dependencies=["comp_01_loop"],
+                    invariant_guard="All draw operations strictly bounded within viewport dimensions.",
+                ),
+                BlueprintComponent(
+                    id="comp_03_player",
+                    name="Player Entity & State Kinematics",
+                    subsystem="Player Entity & State Kinematics",
+                    purpose="Position, velocity, acceleration, jump/action kinetics, and bounds.",
+                    contract="updatePlayer(dt), action()",
+                    dependencies=["comp_01_loop"],
+                    invariant_guard="Coordinate invariants clamped to playable zone boundaries.",
+                ),
+                BlueprintComponent(
+                    id="comp_04_obstacles",
+                    name="Procedural Obstacle & Entity Spawner",
+                    subsystem="Obstacle Spawner & Procedural Generation",
+                    purpose="Spawns and manages procedural obstacles, items, and moving entities.",
+                    contract="spawn(), updateObstacles(dt)",
+                    dependencies=["comp_03_player"],
+                    invariant_guard="Deterministic obstacle intervals with fair passability guarantee.",
+                ),
+                BlueprintComponent(
+                    id="comp_05_collision",
+                    name="AABB & Boundary Collision Detector",
+                    subsystem="Collision Boundary & AABB Invariant",
+                    purpose="Detects player intersections with obstacles, hazards, and track bounds.",
+                    contract="checkCollisions(player, obstacles) -> bool",
+                    dependencies=["comp_03_player", "comp_04_obstacles"],
+                    invariant_guard="Immediate state transition to game-over on collision.",
+                ),
+                BlueprintComponent(
+                    id="comp_06_hud",
+                    name="Score, Stats & HUD Overlay",
+                    subsystem="Score & HUD",
+                    purpose="Renders score counters, level indicators, health bars, and restart modals.",
+                    contract="updateScore(delta), renderHUD()",
+                    dependencies=["comp_01_loop"],
+                    invariant_guard="Monotonically non-decreasing score during session.",
+                ),
+                BlueprintComponent(
+                    id="comp_07_controls",
+                    name="Keyboard, Mouse & Touch Dispatcher",
+                    subsystem="Controls Dispatcher",
+                    purpose="Binds arrow keys, WASD, space, clicks, and touches with debouncing.",
+                    contract="bindControls(), onAction(e)",
+                    dependencies=["comp_03_player"],
+                    invariant_guard="Debounced inputs preventing concurrent direction conflicting events.",
+                ),
             ]
         elif is_math:
             layout = "High-Assurance Mathematical & Algorithmic Architecture"
-            subsystems = ["Input Validation Gate", "Mathematical Core Engine", "Boundary Singularity Preemption", "Verification Harness"]
+            subsystems = [
+                "Input Validation Gate",
+                "Mathematical Core Engine",
+                "Boundary Singularity Preemption",
+                "Verification Harness",
+            ]
             components = [
-                BlueprintComponent(id="comp_01_val", name="Type & Domain Validation Contract", subsystem="Input Validation Gate", purpose="Validates types, numerical ranges, sign invariants, and input constraints.", contract="validate_inputs(*args) -> bool", invariant_guard="Rejects out-of-domain, non-numeric, or malformed inputs with explicit exceptions."),
-                BlueprintComponent(id="comp_02_sing", name="Zero/Null Singularity Preemption", subsystem="Boundary Singularity Preemption", purpose="Guards against zero-division, underflow, overflow, and empty domains.", contract="preempt_singularities(*args) -> Optional[Result]", dependencies=["comp_01_val"], invariant_guard="Zero-divisor returns explicit safe fallback or raises controlled ZeroDivisionError."),
-                BlueprintComponent(id="comp_03_algo", name="Irreducible Mathematical Computation Core", subsystem="Mathematical Core Engine", purpose="Executes core computation with provable complexity bounds.", contract="compute(*args) -> Result", dependencies=["comp_02_sing"], invariant_guard="Referential transparency and idempotence."),
-                BlueprintComponent(id="comp_04_audit", name="Post-Condition & Assertion Verification", subsystem="Verification Harness", purpose="Verifies invariant output contracts, epsilon tolerances, and correctness.", contract="assert_invariants(result) -> bool", dependencies=["comp_03_algo"], invariant_guard="Output strictly satisfies mathematical contract specifications."),
+                BlueprintComponent(
+                    id="comp_01_val",
+                    name="Type & Domain Validation Contract",
+                    subsystem="Input Validation Gate",
+                    purpose="Validates types, numerical ranges, sign invariants, and input constraints.",
+                    contract="validate_inputs(*args) -> bool",
+                    invariant_guard="Rejects out-of-domain, non-numeric, or malformed inputs with explicit exceptions.",
+                ),
+                BlueprintComponent(
+                    id="comp_02_sing",
+                    name="Zero/Null Singularity Preemption",
+                    subsystem="Boundary Singularity Preemption",
+                    purpose="Guards against zero-division, underflow, overflow, and empty domains.",
+                    contract="preempt_singularities(*args) -> Optional[Result]",
+                    dependencies=["comp_01_val"],
+                    invariant_guard="Zero-divisor returns explicit safe fallback or raises controlled ZeroDivisionError.",
+                ),
+                BlueprintComponent(
+                    id="comp_03_algo",
+                    name="Irreducible Mathematical Computation Core",
+                    subsystem="Mathematical Core Engine",
+                    purpose="Executes core computation with provable complexity bounds.",
+                    contract="compute(*args) -> Result",
+                    dependencies=["comp_02_sing"],
+                    invariant_guard="Referential transparency and idempotence.",
+                ),
+                BlueprintComponent(
+                    id="comp_04_audit",
+                    name="Post-Condition & Assertion Verification",
+                    subsystem="Verification Harness",
+                    purpose="Verifies invariant output contracts, epsilon tolerances, and correctness.",
+                    contract="assert_invariants(result) -> bool",
+                    dependencies=["comp_03_algo"],
+                    invariant_guard="Output strictly satisfies mathematical contract specifications.",
+                ),
             ]
         else:
             layout = f"General Modular Architecture for {task_clean[:60]}"
-            subsystems = ["Input Contract & State", "Core Algorithmic Pipeline", "Boundary & Security Guards", "Integration & Verification"]
+            subsystems = [
+                "Input Contract & State",
+                "Core Algorithmic Pipeline",
+                "Boundary & Security Guards",
+                "Integration & Verification",
+            ]
             components = [
-                BlueprintComponent(id="comp_01_contract", name="Input Contract & Type Invariants", subsystem="Input Contract & State", purpose="Validates input specifications, enforces types, and initializes state.", contract="validate_and_init(*args)", invariant_guard="Strict schema and type assertion."),
-                BlueprintComponent(id="comp_02_pipeline", name="Core Business Logic & Pipeline", subsystem="Core Algorithmic Pipeline", purpose="Executes primary task logic, data processing, and functional transformations.", contract="execute_pipeline(state)", dependencies=["comp_01_contract"], invariant_guard="Idempotent, side-effect free processing."),
-                BlueprintComponent(id="comp_03_guards", name="Boundary & Security Guard Invariants", subsystem="Boundary & Security Guards", purpose="Monitors boundary constraints, prevents resource exhaustion, and blocks injection.", contract="enforce_guards(data)", dependencies=["comp_02_pipeline"], invariant_guard="Zero unsafe execution paths or unhandled boundary exceptions."),
-                BlueprintComponent(id="comp_04_tests", name="Verification Suite & Self-Checking Harness", subsystem="Integration & Verification", purpose="Executes assertions, invariant checks, and unit tests.", contract="verify_all() -> bool", dependencies=["comp_03_guards"], invariant_guard="Run defined assertions; coverage and residual risk must be reported."),
+                BlueprintComponent(
+                    id="comp_01_contract",
+                    name="Input Contract & Type Invariants",
+                    subsystem="Input Contract & State",
+                    purpose="Validates input specifications, enforces types, and initializes state.",
+                    contract="validate_and_init(*args)",
+                    invariant_guard="Strict schema and type assertion.",
+                ),
+                BlueprintComponent(
+                    id="comp_02_pipeline",
+                    name="Core Business Logic & Pipeline",
+                    subsystem="Core Algorithmic Pipeline",
+                    purpose="Executes primary task logic, data processing, and functional transformations.",
+                    contract="execute_pipeline(state)",
+                    dependencies=["comp_01_contract"],
+                    invariant_guard="Idempotent, side-effect free processing.",
+                ),
+                BlueprintComponent(
+                    id="comp_03_guards",
+                    name="Boundary & Security Guard Invariants",
+                    subsystem="Boundary & Security Guards",
+                    purpose="Monitors boundary constraints, prevents resource exhaustion, and blocks injection.",
+                    contract="enforce_guards(data)",
+                    dependencies=["comp_02_pipeline"],
+                    invariant_guard="Zero unsafe execution paths or unhandled boundary exceptions.",
+                ),
+                BlueprintComponent(
+                    id="comp_04_tests",
+                    name="Verification Suite & Self-Checking Harness",
+                    subsystem="Integration & Verification",
+                    purpose="Executes assertions, invariant checks, and unit tests.",
+                    contract="verify_all() -> bool",
+                    dependencies=["comp_03_guards"],
+                    invariant_guard="Run defined assertions; coverage and residual risk must be reported.",
+                ),
             ]
 
         return ArchitectureBlueprint(
@@ -621,7 +839,7 @@ class BlueprintEngine:
         issues = getattr(audit, "detected_issues", []) or []
         comps = [
             BlueprintComponent(
-                id=f"refine_{idx+1}",
+                id=f"refine_{idx + 1}",
                 name=f"Repair Invariant: {iss[:40]}",
                 subsystem="Audit Refinement",
                 purpose=f"Eliminates defect: {iss}",
@@ -645,5 +863,6 @@ class BlueprintEngine:
             system_layout="Dynamic Defect Elimination & Refinement Architecture",
             subsystems=["Audit Refinement", "Boundary Enforcement"],
             components=comps,
-            global_invariants=[f"Target finding for review: {iss}" for iss in issues] or ["No findings supplied; invariants remain unverified."],
+            global_invariants=[f"Target finding for review: {iss}" for iss in issues]
+            or ["No findings supplied; invariants remain unverified."],
         )

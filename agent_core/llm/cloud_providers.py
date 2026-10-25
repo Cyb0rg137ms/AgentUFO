@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 import os
-import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
+
 from agent_core.llm.base import BaseLLMProvider, LLMResponse
 
 
@@ -37,7 +37,9 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     ) -> None:
         super().__init__(model_name, **kwargs)
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
-        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL", self.DEFAULT_BASE_URL)).rstrip("/")
+        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL", self.DEFAULT_BASE_URL)).rstrip(
+            "/"
+        )
         self.timeout = timeout
         self._provider_name = provider_name_override or "openai"
 
@@ -248,94 +250,6 @@ class GrokProvider(OpenAICompatibleProvider):
         )
 
 
-class DeepSeekProvider(OpenAICompatibleProvider):
-    """DeepSeek API provider (DeepSeek-V3, DeepSeek-R1 / Reasoner, Coder)."""
-
-    DEFAULT_BASE_URL = "https://api.deepseek.com"
-
-    def __init__(
-        self,
-        model_name: str = "deepseek-chat",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        key = api_key or os.getenv("DEEPSEEK_API_KEY", "")
-        super().__init__(
-            model_name=model_name,
-            api_key=key,
-            base_url=base_url or self.DEFAULT_BASE_URL,
-            provider_name_override="deepseek",
-            **kwargs,
-        )
-
-
-class KimiProvider(OpenAICompatibleProvider):
-    """Moonshot AI Kimi provider (Kimi-k2, Moonshot-v1-8k/32k/128k)."""
-
-    DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
-
-    def __init__(
-        self,
-        model_name: str = "kimi-k2",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        key = api_key or os.getenv("MOONSHOT_API_KEY") or os.getenv("KIMI_API_KEY", "")
-        super().__init__(
-            model_name=model_name,
-            api_key=key,
-            base_url=base_url or self.DEFAULT_BASE_URL,
-            provider_name_override="kimi",
-            **kwargs,
-        )
-
-
-class MiniMaxProvider(OpenAICompatibleProvider):
-    """MiniMax API provider (MiniMax-Text-01, abab6.5s, abab6.5)."""
-
-    DEFAULT_BASE_URL = "https://api.minimax.chat/v1"
-
-    def __init__(
-        self,
-        model_name: str = "MiniMax-Text-01",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        key = api_key or os.getenv("MINIMAX_API_KEY", "")
-        super().__init__(
-            model_name=model_name,
-            api_key=key,
-            base_url=base_url or self.DEFAULT_BASE_URL,
-            provider_name_override="minimax",
-            **kwargs,
-        )
-
-
-class QwenProvider(OpenAICompatibleProvider):
-    """Alibaba Cloud DashScope Qwen provider (qwen-max, qwen-plus, qwen-2.5-coder)."""
-
-    DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
-    def __init__(
-        self,
-        model_name: str = "qwen-max",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY", "")
-        super().__init__(
-            model_name=model_name,
-            api_key=key,
-            base_url=base_url or self.DEFAULT_BASE_URL,
-            provider_name_override="qwen",
-            **kwargs,
-        )
-
-
 class GeminiProvider(BaseLLMProvider):
     """Google Gemini API provider with automatic backoff retry and smart model fallback."""
 
@@ -360,7 +274,9 @@ class GeminiProvider(BaseLLMProvider):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         if not self.api_key:
             try:
-                env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+                env_path = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+                )
                 if os.path.exists(env_path):
                     with open(env_path, "r", encoding="utf-8") as f:
                         for line in f:
@@ -390,7 +306,9 @@ class GeminiProvider(BaseLLMProvider):
     ) -> LLMResponse:
         contents = []
         if system_prompt:
-            contents.append({"role": "user", "parts": [{"text": f"System Instructions: {system_prompt}"}]})
+            contents.append(
+                {"role": "user", "parts": [{"text": f"System Instructions: {system_prompt}"}]}
+            )
             contents.append({"role": "model", "parts": [{"text": "Understood."}]})
         contents.append({"role": "user", "parts": [{"text": prompt}]})
 
@@ -465,61 +383,102 @@ class GeminiProvider(BaseLLMProvider):
             else:
                 user_parts.append(f"{m.get('role').upper()}: {m.get('content')}")
         full_prompt = "\n\n".join(user_parts)
-        return self.generate(full_prompt, system_prompt=system or None, temperature=temperature, max_tokens=max_tokens, **kwargs)
-
+        return self.generate(
+            full_prompt,
+            system_prompt=system or None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
 
 
 # -----------------------------------------------------------------------
 # DeepSeek AI  (OpenAI-compatible)
 # -----------------------------------------------------------------------
 
+
 class DeepSeekProvider(OpenAICompatibleProvider):
-    DEFAULT_BASE_URL = 'https://api.deepseek.com/v1'
-    def __init__(self, model_name='deepseek-chat', api_key=None, base_url=None, timeout=60.0, **kwargs):
-        super().__init__(model_name=model_name,
-            api_key=api_key or os.getenv('DEEPSEEK_API_KEY', ''),
-            base_url=base_url or os.getenv('DEEPSEEK_BASE_URL', self.DEFAULT_BASE_URL),
-            timeout=timeout, provider_name_override='deepseek', **kwargs)
-    def is_available(self): return bool(self.api_key)
+    DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
+
+    def __init__(
+        self, model_name="deepseek-chat", api_key=None, base_url=None, timeout=60.0, **kwargs
+    ):
+        super().__init__(
+            model_name=model_name,
+            api_key=api_key or os.getenv("DEEPSEEK_API_KEY", ""),
+            base_url=base_url or os.getenv("DEEPSEEK_BASE_URL", self.DEFAULT_BASE_URL),
+            timeout=timeout,
+            provider_name_override="deepseek",
+            **kwargs,
+        )
+
+    def is_available(self):
+        return bool(self.api_key)
 
 
 # -----------------------------------------------------------------------
 # Moonshot AI / Kimi  (OpenAI-compatible)
 # -----------------------------------------------------------------------
 
+
 class KimiProvider(OpenAICompatibleProvider):
-    DEFAULT_BASE_URL = 'https://api.moonshot.cn/v1'
-    def __init__(self, model_name='kimi-k2', api_key=None, base_url=None, timeout=60.0, **kwargs):
-        super().__init__(model_name=model_name,
-            api_key=api_key or os.getenv('MOONSHOT_API_KEY', '') or os.getenv('KIMI_API_KEY', ''),
-            base_url=base_url or os.getenv('MOONSHOT_BASE_URL', self.DEFAULT_BASE_URL),
-            timeout=timeout, provider_name_override='kimi', **kwargs)
-    def is_available(self): return bool(self.api_key)
+    DEFAULT_BASE_URL = "https://api.moonshot.cn/v1"
+
+    def __init__(self, model_name="kimi-k2", api_key=None, base_url=None, timeout=60.0, **kwargs):
+        super().__init__(
+            model_name=model_name,
+            api_key=api_key or os.getenv("MOONSHOT_API_KEY", "") or os.getenv("KIMI_API_KEY", ""),
+            base_url=base_url or os.getenv("MOONSHOT_BASE_URL", self.DEFAULT_BASE_URL),
+            timeout=timeout,
+            provider_name_override="kimi",
+            **kwargs,
+        )
+
+    def is_available(self):
+        return bool(self.api_key)
 
 
 # -----------------------------------------------------------------------
 # MiniMax AI  (OpenAI-compatible)
 # -----------------------------------------------------------------------
 
+
 class MiniMaxProvider(OpenAICompatibleProvider):
-    DEFAULT_BASE_URL = 'https://api.minimax.chat/v1'
-    def __init__(self, model_name='MiniMax-Text-01', api_key=None, base_url=None, timeout=60.0, **kwargs):
-        super().__init__(model_name=model_name,
-            api_key=api_key or os.getenv('MINIMAX_API_KEY', ''),
-            base_url=base_url or os.getenv('MINIMAX_BASE_URL', self.DEFAULT_BASE_URL),
-            timeout=timeout, provider_name_override='minimax', **kwargs)
-    def is_available(self): return bool(self.api_key)
+    DEFAULT_BASE_URL = "https://api.minimax.chat/v1"
+
+    def __init__(
+        self, model_name="MiniMax-Text-01", api_key=None, base_url=None, timeout=60.0, **kwargs
+    ):
+        super().__init__(
+            model_name=model_name,
+            api_key=api_key or os.getenv("MINIMAX_API_KEY", ""),
+            base_url=base_url or os.getenv("MINIMAX_BASE_URL", self.DEFAULT_BASE_URL),
+            timeout=timeout,
+            provider_name_override="minimax",
+            **kwargs,
+        )
+
+    def is_available(self):
+        return bool(self.api_key)
 
 
 # -----------------------------------------------------------------------
 # Alibaba Qwen / DashScope  (OpenAI-compatible)
 # -----------------------------------------------------------------------
 
+
 class QwenProvider(OpenAICompatibleProvider):
-    DEFAULT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-    def __init__(self, model_name='qwen-max', api_key=None, base_url=None, timeout=60.0, **kwargs):
-        super().__init__(model_name=model_name,
-            api_key=api_key or os.getenv('DASHSCOPE_API_KEY', '') or os.getenv('QWEN_API_KEY', ''),
-            base_url=base_url or os.getenv('DASHSCOPE_BASE_URL', self.DEFAULT_BASE_URL),
-            timeout=timeout, provider_name_override='qwen', **kwargs)
-    def is_available(self): return bool(self.api_key)
+    DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def __init__(self, model_name="qwen-max", api_key=None, base_url=None, timeout=60.0, **kwargs):
+        super().__init__(
+            model_name=model_name,
+            api_key=api_key or os.getenv("DASHSCOPE_API_KEY", "") or os.getenv("QWEN_API_KEY", ""),
+            base_url=base_url or os.getenv("DASHSCOPE_BASE_URL", self.DEFAULT_BASE_URL),
+            timeout=timeout,
+            provider_name_override="qwen",
+            **kwargs,
+        )
+
+    def is_available(self):
+        return bool(self.api_key)

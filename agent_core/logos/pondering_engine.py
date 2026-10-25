@@ -14,12 +14,13 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
 class PonderingAngle:
     """An analytical angle of horizontal inquiry."""
+
     name: str
     dimension: str
     hypothesis: str
@@ -41,6 +42,7 @@ class PonderingAngle:
 @dataclass
 class PonderingSynthesis:
     """The synthesized output of multi-angle horizontal pondering."""
+
     total_angles_evaluated: int
     qualified_properties_count: int
     elimination_ratio_per_iteration: float
@@ -68,7 +70,11 @@ class PonderingEngine:
         with deterministic fallback.
         """
         # Dynamic LLM pondering
-        if self.llm and hasattr(self.llm, "generate") and getattr(self.llm, "is_available", lambda: True)():
+        if (
+            self.llm
+            and hasattr(self.llm, "generate")
+            and getattr(self.llm, "is_available", lambda: True)()
+        ):
             try:
                 system_prompt = (
                     "You are the LOGOS Horizontal Pondering Engine. Evaluate the user's task from 5 to 6 "
@@ -102,21 +108,27 @@ class PonderingEngine:
                             raise ValueError("Each pondering angle must be a JSON object")
                         conf = float(item.get("confidence", 0.0))
                         if not math.isfinite(conf) or not 0.0 <= conf <= 1.0:
-                            raise ValueError("Confidence scores must be finite values between 0 and 1")
+                            raise ValueError(
+                                "Confidence scores must be finite values between 0 and 1"
+                            )
                         evidence = item.get("evidence", [])
-                        if not isinstance(evidence, list) or not all(isinstance(x, str) for x in evidence):
+                        if not isinstance(evidence, list) or not all(
+                            isinstance(x, str) for x in evidence
+                        ):
                             raise ValueError("Angle evidence must be a list of strings")
                         hypothesis = item.get("hypothesis", "")
                         if not isinstance(hypothesis, str) or not hypothesis.strip():
                             raise ValueError("Each pondering angle must include a hypothesis")
-                        llm_angles.append(PonderingAngle(
-                            name=str(item.get("name", "Analytical Perspective")),
-                            dimension=str(item.get("dimension", "Invariant Dimension")),
-                            hypothesis=hypothesis,
-                            confidence=conf,
-                            evidence=evidence,
-                            passed_threshold=(conf >= self.CONFIDENCE_THRESHOLD),
-                        ))
+                        llm_angles.append(
+                            PonderingAngle(
+                                name=str(item.get("name", "Analytical Perspective")),
+                                dimension=str(item.get("dimension", "Invariant Dimension")),
+                                hypothesis=hypothesis,
+                                confidence=conf,
+                                evidence=evidence,
+                                passed_threshold=(conf >= self.CONFIDENCE_THRESHOLD),
+                            )
+                        )
 
                     qualified = [a for a in llm_angles if a.passed_threshold]
                     rejected = [a for a in llm_angles if not a.passed_threshold]
@@ -144,59 +156,79 @@ class PonderingEngine:
         angles: List[PonderingAngle] = []
 
         # Deterministic fallback emits a review checklist, not task-specific proof claims.
-        angles.append(PonderingAngle(
-            name="Angle 1: Representation and Input Contracts",
-            dimension="Data and Contracts",
-            hypothesis="Specify input/output types, size bounds, ownership, and representation invariants before implementation.",
-            confidence=0.65,
-            evidence=["Static fallback checklist; no code or runtime evidence was evaluated."],
-        ))
+        angles.append(
+            PonderingAngle(
+                name="Angle 1: Representation and Input Contracts",
+                dimension="Data and Contracts",
+                hypothesis="Specify input/output types, size bounds, ownership, and representation invariants before implementation.",
+                confidence=0.65,
+                evidence=["Static fallback checklist; no code or runtime evidence was evaluated."],
+            )
+        )
 
         if "divide" in t_low or "division" in t_low:
             boundary_hypothesis = "Define denominator-zero and non-finite input behavior explicitly, then test those cases."
-            boundary_evidence = ["The task description mentions division; actual behavior has not been tested."]
+            boundary_evidence = [
+                "The task description mentions division; actual behavior has not been tested."
+            ]
         elif any(word in t_low for word in ("element", "index", "array", "list")):
             boundary_hypothesis = "Check negative and upper-bound indices and define whether invalid access returns a sentinel or raises."
-            boundary_evidence = ["The task description suggests indexed data; exact input contracts remain unspecified."]
+            boundary_evidence = [
+                "The task description suggests indexed data; exact input contracts remain unspecified."
+            ]
         else:
             boundary_hypothesis = "Identify boundary values, invalid inputs, and failure semantics before mutation or external effects."
-            boundary_evidence = ["Generic review prompt; no domain-specific proof is available from the task text alone."]
-        angles.append(PonderingAngle(
-            name="Angle 2: Boundary Conditions",
-            dimension="Input Boundaries",
-            hypothesis=boundary_hypothesis,
-            confidence=0.75,
-            evidence=boundary_evidence,
-        ))
+            boundary_evidence = [
+                "Generic review prompt; no domain-specific proof is available from the task text alone."
+            ]
+        angles.append(
+            PonderingAngle(
+                name="Angle 2: Boundary Conditions",
+                dimension="Input Boundaries",
+                hypothesis=boundary_hypothesis,
+                confidence=0.75,
+                evidence=boundary_evidence,
+            )
+        )
 
-        angles.append(PonderingAngle(
-            name="Angle 3: Side Effects and State",
-            dimension="State and Effects",
-            hypothesis="Decide which side effects are allowed; test repeatability only where purity or idempotence is required.",
-            confidence=0.60,
-            evidence=["Purity and idempotence are requirements to establish, not assumptions to make."],
-        ))
-        angles.append(PonderingAngle(
-            name="Angle 4: Complexity and Resource Limits",
-            dimension="Performance",
-            hypothesis="State target input sizes and measure time, memory, and external-call costs against those targets.",
-            confidence=0.60,
-            evidence=["No runtime profile or input-size distribution was supplied."],
-        ))
-        angles.append(PonderingAngle(
-            name="Angle 5: Security and Failure Isolation",
-            dimension="Security",
-            hypothesis="Review untrusted inputs, filesystem access, subprocess use, secret exposure, and failure recovery.",
-            confidence=0.70,
-            evidence=["Checklist only; no dynamic security test has been run."],
-        ))
-        angles.append(PonderingAngle(
-            name="Angle 6: Unverified Optimization Hypothesis",
-            dimension="Experimental Optimization",
-            hypothesis="Do not remove validation or safety checks for speed unless profiling demonstrates a bottleneck and regression tests preserve behavior.",
-            confidence=0.35,
-            evidence=["No benchmark supports a speedup estimate."],
-        ))
+        angles.append(
+            PonderingAngle(
+                name="Angle 3: Side Effects and State",
+                dimension="State and Effects",
+                hypothesis="Decide which side effects are allowed; test repeatability only where purity or idempotence is required.",
+                confidence=0.60,
+                evidence=[
+                    "Purity and idempotence are requirements to establish, not assumptions to make."
+                ],
+            )
+        )
+        angles.append(
+            PonderingAngle(
+                name="Angle 4: Complexity and Resource Limits",
+                dimension="Performance",
+                hypothesis="State target input sizes and measure time, memory, and external-call costs against those targets.",
+                confidence=0.60,
+                evidence=["No runtime profile or input-size distribution was supplied."],
+            )
+        )
+        angles.append(
+            PonderingAngle(
+                name="Angle 5: Security and Failure Isolation",
+                dimension="Security",
+                hypothesis="Review untrusted inputs, filesystem access, subprocess use, secret exposure, and failure recovery.",
+                confidence=0.70,
+                evidence=["Checklist only; no dynamic security test has been run."],
+            )
+        )
+        angles.append(
+            PonderingAngle(
+                name="Angle 6: Unverified Optimization Hypothesis",
+                dimension="Experimental Optimization",
+                hypothesis="Do not remove validation or safety checks for speed unless profiling demonstrates a bottleneck and regression tests preserve behavior.",
+                confidence=0.35,
+                evidence=["No benchmark supports a speedup estimate."],
+            )
+        )
 
         # Apply strict 95%+ filter
         qualified: List[PonderingAngle] = []
@@ -246,8 +278,12 @@ class PonderingEngine:
         if not math.isfinite(per_iter_reduction_pct) or not 0.0 <= per_iter_reduction_pct < 100.0:
             raise ValueError("per_iter_reduction_pct must be in [0, 100)")
         fraction_retained = 1.0 - (per_iter_reduction_pct / 100.0)
-        remaining_multiplier = fraction_retained ** iterations
-        bits_eliminated = min(float(initial_space_bits), -math.log2(remaining_multiplier)) if remaining_multiplier > 0 else float(initial_space_bits)
+        remaining_multiplier = fraction_retained**iterations
+        bits_eliminated = (
+            min(float(initial_space_bits), -math.log2(remaining_multiplier))
+            if remaining_multiplier > 0
+            else float(initial_space_bits)
+        )
         final_bits = max(0.0, initial_space_bits - bits_eliminated)
 
         return {
@@ -256,7 +292,8 @@ class PonderingEngine:
             "reduction_rate_pct": per_iter_reduction_pct,
             "bits_eliminated": round(bits_eliminated, 2),
             "remaining_bits": round(final_bits, 2),
-            "computable_range": final_bits <= 40.0,  # heuristic only; practical feasibility depends on workload
+            "computable_range": final_bits
+            <= 40.0,  # heuristic only; practical feasibility depends on workload
             "is_theoretical_projection": True,
             "measured": False,
         }

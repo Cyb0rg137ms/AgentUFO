@@ -15,9 +15,8 @@ Core Architecture:
 from __future__ import annotations
 
 import math
-import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     import numpy as np
@@ -28,6 +27,7 @@ except ImportError:  # The UI and core agent pipeline can run without the option
 @dataclass
 class QditState:
     """Rigorous state container with verifiable certificates."""
+
     representation: str
     num_sites: int
     bond_dimension: int
@@ -62,7 +62,9 @@ class NeuralVolumeLawResidualCache:
         if n_sites < 1 or d_physical < 2 or hidden_dim < 1:
             raise ValueError("n_sites and hidden_dim must be >= 1; d_physical must be >= 2")
         if np is None:
-            raise ImportError("NumPy is required for the optional Qdit tensor experiment; install with python -m pip install -e .[qdit].")
+            raise ImportError(
+                "NumPy is required for the optional Qdit tensor experiment; install with python -m pip install -e .[qdit]."
+            )
         self.n_sites = n_sites
         self.d_physical = d_physical
         self.hidden_dim = hidden_dim
@@ -88,7 +90,9 @@ class NeuralVolumeLawResidualCache:
             "Vh": Vh_discard.copy(),
         }
         # Recompute instead of accumulating energy when a bond entry is replaced.
-        self.total_residual_energy = float(sum(np.sum(item["S"] ** 2) for item in self.discarded_bonds.values()))
+        self.total_residual_energy = float(
+            sum(np.sum(item["S"] ** 2) for item in self.discarded_bonds.values())
+        )
         h_act = np.tanh(np.linspace(0.1, 1.0, self.hidden_dim) * float(np.sum(S_discard**2)))
         self.W[bond_idx % self.n_sites] = h_act.astype(np.float32)
 
@@ -136,7 +140,9 @@ class QditTensorEngine:
         if not math.isfinite(truncation_tolerance) or truncation_tolerance < 0:
             raise ValueError("truncation_tolerance must be finite and non-negative")
         if np is None:
-            raise ImportError("NumPy is required for QditTensorEngine; install the optional qdit dependency.")
+            raise ImportError(
+                "NumPy is required for QditTensorEngine; install the optional qdit dependency."
+            )
         self.n_qdits = n_qdits
         self.d_physical = d_physical
         self.current_bond_dim = initial_bond_dim
@@ -171,7 +177,9 @@ class QditTensorEngine:
         if site < 0 or site >= self.n_qdits:
             raise IndexError(f"Site {site} out of bounds [0, {self.n_qdits})")
         if gate_matrix_10x10.shape != (self.d_physical, self.d_physical):
-            raise ValueError(f"Single-site gate must have shape ({self.d_physical}, {self.d_physical})")
+            raise ValueError(
+                f"Single-site gate must have shape ({self.d_physical}, {self.d_physical})"
+            )
         T = self.tensors[site]
         # Contract along physical index: T_new[l, q, r] = sum_p T[l, p, r] * gate[q, p]
         G = gate_matrix_10x10.astype(np.complex64)
@@ -193,7 +201,7 @@ class QditTensorEngine:
             raise IndexError(f"Sites must be within [0, {self.n_qdits})")
         if site_a == site_b:
             raise ValueError("A two-site gate requires two distinct sites")
-        expected_shape = (self.d_physical ** 2, self.d_physical ** 2)
+        expected_shape = (self.d_physical**2, self.d_physical**2)
         if gate_matrix_100x100 is not None and gate_matrix_100x100.shape != expected_shape:
             raise ValueError(f"Two-site gate must have shape {expected_shape}")
         if site_b != site_a + 1:
@@ -211,7 +219,9 @@ class QditTensorEngine:
         # 2. ACTUALLY APPLY THE 100x100 GATE MATRIX IF PROVIDED
         if gate_matrix_100x100 is not None:
             # Gate shape: (d_a_out * d_b_out, d_a_in * d_b_in) = (100, 100)
-            G = gate_matrix_100x100.astype(np.complex64).reshape((self.d_physical, self.d_physical, self.d_physical, self.d_physical))
+            G = gate_matrix_100x100.astype(np.complex64).reshape(
+                (self.d_physical, self.d_physical, self.d_physical, self.d_physical)
+            )
             # Contract Theta[l, a, b, r] with G[a_out, b_out, a_in, b_in]
             Theta = np.einsum("labr,cdab->lcdr", Theta, G)
 
@@ -296,7 +306,9 @@ class QditTensorEngine:
                 "call reconstruct_state(use_residual=False) for the retained MPS approximation."
             )
         if self.n_qdits > 6:
-            raise ValueError(f"Explicit state reconstruction only supported for N <= 6 (got {self.n_qdits})")
+            raise ValueError(
+                f"Explicit state reconstruction only supported for N <= 6 (got {self.n_qdits})"
+            )
 
         # Contract entire MPS chain
         state = self.tensors[0]  # (1, d, r)
@@ -345,7 +357,10 @@ class ExactClassicalVerifier:
                     return False
                 if abs(lit) not in assignment or not isinstance(assignment[abs(lit)], bool):
                     return False
-            if not any((lit > 0 and assignment[abs(lit)]) or (lit < 0 and not assignment[abs(lit)]) for lit in clause):
+            if not any(
+                (lit > 0 and assignment[abs(lit)]) or (lit < 0 and not assignment[abs(lit)])
+                for lit in clause
+            ):
                 return False
         return True
 
@@ -358,7 +373,12 @@ class ExactClassicalVerifier:
             raise ValueError("State vectors must be non-empty and have the same shape")
         norm_exact = float(np.linalg.norm(exact))
         norm_approx = float(np.linalg.norm(approx))
-        if not math.isfinite(norm_exact) or not math.isfinite(norm_approx) or norm_exact <= 1e-12 or norm_approx <= 1e-12:
+        if (
+            not math.isfinite(norm_exact)
+            or not math.isfinite(norm_approx)
+            or norm_exact <= 1e-12
+            or norm_approx <= 1e-12
+        ):
             return 0.0
         overlap = np.vdot(exact / norm_exact, approx / norm_approx)
         fidelity = float(abs(overlap) ** 2)
@@ -376,7 +396,9 @@ class QditSearchAccelerator:
 
     def __init__(self, d_physical: int = 10, max_bond_dim: int = 16) -> None:
         if d_physical != 10:
-            raise ValueError("QditSearchAccelerator currently implements the d=10 candidate encoding only")
+            raise ValueError(
+                "QditSearchAccelerator currently implements the d=10 candidate encoding only"
+            )
         if max_bond_dim < 1:
             raise ValueError("max_bond_dim must be >= 1")
         self.d_physical = d_physical
@@ -402,19 +424,29 @@ class QditSearchAccelerator:
             for index, candidate in enumerate(candidates):
                 score = float(scoring_fn(candidate))
                 if not math.isfinite(score):
-                    raise ValueError(f"scoring_fn returned a non-finite score for candidate {index}")
+                    raise ValueError(
+                        f"scoring_fn returned a non-finite score for candidate {index}"
+                    )
                 scored.append((candidate, score, index))
             scored.sort(key=lambda item: (-item[1], item[2]))
             chosen = [candidate for candidate, _, _ in scored[:top_k]]
             state = QditState(
                 representation="disabled (optional NumPy dependency unavailable)",
-                num_sites=0, bond_dimension=0, truncation_error=0.0, residual_norm=0.0,
+                num_sites=0,
+                bond_dimension=0,
+                truncation_error=0.0,
+                residual_norm=0.0,
                 reconstruction_fidelity=0.0,
-                certificate={"candidate_reduction_ratio": n_candidates / max(1, len(chosen)),
-                             "candidates_in": n_candidates, "candidates_returned": len(chosen),
-                             "reconstruction_fidelity_measured": False,
-                             "note": "Classical scoring only; tensor experiment skipped because NumPy is unavailable."},
-                exactness_status=False, verifier_status="OPTIONAL_ACCELERATOR_UNAVAILABLE")
+                certificate={
+                    "candidate_reduction_ratio": n_candidates / max(1, len(chosen)),
+                    "candidates_in": n_candidates,
+                    "candidates_returned": len(chosen),
+                    "reconstruction_fidelity_measured": False,
+                    "note": "Classical scoring only; tensor experiment skipped because NumPy is unavailable.",
+                },
+                exactness_status=False,
+                verifier_status="OPTIONAL_ACCELERATOR_UNAVAILABLE",
+            )
             return chosen, state
         if n_candidates == 0:
             empty_state = QditState(
@@ -424,7 +456,12 @@ class QditSearchAccelerator:
                 truncation_error=0.0,
                 residual_norm=0.0,
                 reconstruction_fidelity=0.0,
-                certificate={"candidate_reduction_ratio": 1.0, "candidates_in": 0, "candidates_returned": 0, "reconstruction_fidelity_measured": False},
+                certificate={
+                    "candidate_reduction_ratio": 1.0,
+                    "candidates_in": 0,
+                    "candidates_returned": 0,
+                    "reconstruction_fidelity_measured": False,
+                },
                 exactness_status=False,
                 verifier_status="NO_CANDIDATES",
             )
@@ -438,7 +475,9 @@ class QditSearchAccelerator:
             scored.append((cand, score, index))
 
         n_sites = max(2, min(20, int(math.ceil(math.log(max(10, n_candidates), 10)))))
-        sim = QditTensorEngine(n_qdits=n_sites, d_physical=self.d_physical, max_bond_dim=self.max_bond_dim)
+        sim = QditTensorEngine(
+            n_qdits=n_sites, d_physical=self.d_physical, max_bond_dim=self.max_bond_dim
+        )
 
         # Experimental classical tensor encoding; ranking below is still done by scoring_fn.
         total_trunc_err = 0.0

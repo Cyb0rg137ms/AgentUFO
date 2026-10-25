@@ -23,15 +23,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # ---------------------------------------------------------------------------
 # Message model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Message:
     """A single message in the conversation."""
-    role: str        # "user", "assistant", "tool", "system"
+
+    role: str  # "user", "assistant", "tool", "system"
     content: str
     timestamp: float = field(default_factory=time.time)
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -47,6 +48,7 @@ class Message:
 # ---------------------------------------------------------------------------
 # ConversationBuffer
 # ---------------------------------------------------------------------------
+
 
 class ConversationBuffer:
     """
@@ -116,9 +118,11 @@ class ConversationBuffer:
 # EpisodicStore
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Episode:
     """A completed task episode stored in episodic memory."""
+
     task_description: str
     solution_summary: str
     tool_calls: List[Dict[str, Any]]
@@ -132,7 +136,7 @@ class Episode:
         # Build trigram frequency dict
         trigrams: Dict[str, int] = {}
         for i in range(len(text) - 2):
-            tg = text[i:i+3]
+            tg = text[i : i + 3]
             trigrams[tg] = trigrams.get(tg, 0) + 1
 
         # Project to fixed-size 256-dim vector via hashing
@@ -260,16 +264,20 @@ class EpisodicStore:
         return len(self._episodes)
 
     def __repr__(self) -> str:
-        return f"EpisodicStore({self.episode_count} episodes, success_rate={self.success_rate():.2%})"
+        return (
+            f"EpisodicStore({self.episode_count} episodes, success_rate={self.success_rate():.2%})"
+        )
 
 
 # ---------------------------------------------------------------------------
 # MultiLayerContinuousMemory
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ContinuousTaskChunk:
     """A single layer chunk in a long-horizon continuous multi-layer generation."""
+
     chunk_id: int
     stage: str
     input_spec: str
@@ -355,7 +363,7 @@ class MultiLayerContinuousMemory:
         sections = [
             "=== CONTINUOUS TASK MEMORY: PRIOR STAGES & SYMBOL CONTRACTS ===",
             "You are working on a continuous multi-layer software task.",
-            "Maintain complete syntactic and logical continuity with these completed stages:\n"
+            "Maintain complete syntactic and logical continuity with these completed stages:\n",
         ]
 
         for c in self.chunks:
@@ -377,4 +385,3 @@ class MultiLayerContinuousMemory:
         self.chunks.clear()
         self.shared_symbols.clear()
         self.active_invariants.clear()
-

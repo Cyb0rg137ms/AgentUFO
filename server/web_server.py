@@ -9,15 +9,13 @@ from __future__ import annotations
 
 import json
 import mimetypes
-import os
-import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional
-import urllib.parse
 
-from server.handlers import ChatSessionManager
 from server.crew_runtime import CrewRunManager
+from server.handlers import ChatSessionManager
 
 
 class AgentIDERequestHandler(BaseHTTPRequestHandler):
@@ -28,7 +26,7 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
     static_dir = Path(__file__).parent.parent / "web"
     timeout = 300.0
 
-    def _send_json(self, data: Dict[str, Any], status: int = 200) -> None:
+    def _send_json(self, data: Any, status: int = 200) -> None:
         """Helper to send JSON responses."""
         payload = json.dumps(data).encode("utf-8")
         self.send_response(status)
@@ -95,14 +93,16 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
         if path in ("/healthz", "/api/health"):
             mgr = self.session_manager
             provider_available = bool(getattr(mgr.operator.llm, "is_available", lambda: False)())
-            self._send_json({
-                "status": "ok",
-                "service": "agentufo",
-                "version": "0.1.0-dev",
-                "provider": getattr(mgr, "provider_name", "unknown"),
-                "provider_available": provider_available,
-                "setup_required": not provider_available,
-            })
+            self._send_json(
+                {
+                    "status": "ok",
+                    "service": "agentufo",
+                    "version": "0.1.0-dev",
+                    "provider": getattr(mgr, "provider_name", "unknown"),
+                    "provider_available": provider_available,
+                    "setup_required": not provider_available,
+                }
+            )
             return
 
         # Durable crew control-plane endpoints. Polling is intentionally simple and local-first.
@@ -110,7 +110,7 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.crew_runs.list_runs())
             return
         elif path.startswith("/api/crew/runs/") and path.endswith("/events"):
-            run_id = path[len("/api/crew/runs/"):-len("/events")].strip("/")
+            run_id = path[len("/api/crew/runs/") : -len("/events")].strip("/")
             try:
                 after = max(0, int((query.get("after") or ["0"])[0]))
             except (TypeError, ValueError):
@@ -119,9 +119,9 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
             self._send_json(result, status=404 if result.get("error") else 200)
             return
         elif path.startswith("/api/crew/runs/"):
-            run_id = path[len("/api/crew/runs/"):].strip("/")
-            result = self.crew_runs.get_run(run_id)
-            self._send_json(result or {"error": "Run not found"}, status=200 if result else 404)
+            run_id = path[len("/api/crew/runs/") :].strip("/")
+            run = self.crew_runs.get_run(run_id)
+            self._send_json(run or {"error": "Run not found"}, status=200 if run else 404)
             return
 
         # API Endpoints
@@ -146,7 +146,7 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.session_manager.get_projects())
             return
         elif path == "/api/fs/tree":
-            root = (query.get("dir") or query.get("path") or query.get("folder") or [None])[0]
+            root = (query.get("dir") or query.get("path") or query.get("folder") or [None])[0]  # type: ignore[list-item]
             self._send_json(self.session_manager.get_project_tree(root_dir=root))
             return
         elif path == "/api/fs/read":
@@ -244,10 +244,15 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
             return
         max_body_bytes = 10 * 1024 * 1024
         if content_length < 0 or content_length > max_body_bytes:
-            self._send_json({"error": f"Request body must be at most {max_body_bytes // (1024 * 1024)} MiB"}, status=413)
+            self._send_json(
+                {"error": f"Request body must be at most {max_body_bytes // (1024 * 1024)} MiB"},
+                status=413,
+            )
             return
         try:
-            post_body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            post_body = (
+                self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+            )
             payload = json.loads(post_body)
             if not isinstance(payload, dict):
                 raise ValueError("JSON body must be an object")
@@ -299,7 +304,12 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
 
             def on_progress(evt):
                 try:
-                    payload_evt = json.dumps({"type": "progress", "event": evt.to_dict() if hasattr(evt, "to_dict") else evt})
+                    payload_evt = json.dumps(
+                        {
+                            "type": "progress",
+                            "event": evt.to_dict() if hasattr(evt, "to_dict") else evt,
+                        }
+                    )
                     self.wfile.write(f"data: {payload_evt}\n\n".encode("utf-8"))
                     self.wfile.flush()
                 except Exception:
@@ -343,12 +353,15 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
                 res = self.session_manager.run_agentufo_mission(prompt)
                 self._send_json(res)
             except Exception as e:
-                self._send_json({
-                    "status": "error",
-                    "review_passed": False,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                }, status=500)
+                self._send_json(
+                    {
+                        "status": "error",
+                        "review_passed": False,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                    status=500,
+                )
 
         elif path == "/api/agentufo/seat/action":
             seat_id = payload.get("seat_id", "")
@@ -361,7 +374,9 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
             target_path = payload.get("target_path") or payload.get("path") or ""
             breaker = payload.get("breaker_id") or "master_admin"
             reason = payload.get("reason") or "UI Override"
-            res = self.session_manager.break_agentufo_lock(target_path, breaker_id=breaker, reason=reason)
+            res = self.session_manager.break_agentufo_lock(
+                target_path, breaker_id=breaker, reason=reason
+            )
             self._send_json(res)
 
         elif path == "/api/agentufo/paths/claim":
@@ -369,7 +384,9 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
             paths = payload.get("paths") or []
             role = payload.get("seat_role") or "builder"
             lease = float(payload.get("lease_seconds", 600.0))
-            res = self.session_manager.claim_agentufo_paths(seat_id, paths, seat_role=role, lease_seconds=lease)
+            res = self.session_manager.claim_agentufo_paths(
+                seat_id, paths, seat_role=role, lease_seconds=lease
+            )
             self._send_json(res)
 
         elif path == "/api/agentufo/brief/handoff":
@@ -378,7 +395,9 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
             title = payload.get("title") or "Inter-Seat Brief"
             body = payload.get("body") or ""
             btype = payload.get("brief_type") or "handoff"
-            res = self.session_manager.handoff_agentufo_brief(from_seat, to_seat, title, body, brief_type=btype)
+            res = self.session_manager.handoff_agentufo_brief(
+                from_seat, to_seat, title, body, brief_type=btype
+            )
             self._send_json(res)
 
         elif path in ("/api/projects/open", "/api/fs/open_project"):
@@ -463,7 +482,13 @@ class AgentIDERequestHandler(BaseHTTPRequestHandler):
 class AgentIDEServer:
     """Server wrapper for ThreadingHTTPServer."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8000, provider: Optional[str] = None, model: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> None:
         self.host = host
         self.port = port
         self.httpd: Optional[ThreadingHTTPServer] = None
@@ -480,9 +505,10 @@ class AgentIDEServer:
 
     def start(self) -> None:
         import socket
+
         server_address = (self.host, self.port)
         self.httpd = ThreadingHTTPServer(server_address, AgentIDERequestHandler)
-        
+
         # Probe local Ollama status
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.0)

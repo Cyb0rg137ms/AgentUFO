@@ -1,0 +1,271 @@
+{
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux-6.12.94+-x86_64-with-glibc2.41",
+    "cpu_count": 8,
+    "provider": "none (offline benchmark)"
+  },
+  "http": {
+    "endpoints": {
+      "/healthz": {
+        "n": 300,
+        "p50_ms": 0.411,
+        "p95_ms": 0.888,
+        "p99_ms": 4.045,
+        "mean_ms": 0.595
+      },
+      "/": {
+        "n": 300,
+        "p50_ms": 0.58,
+        "p95_ms": 0.903,
+        "p99_ms": 1.109,
+        "mean_ms": 0.625
+      },
+      "/api/crew/runs": {
+        "n": 300,
+        "p50_ms": 0.4,
+        "p95_ms": 0.768,
+        "p99_ms": 0.872,
+        "mean_ms": 0.453
+      },
+      "/api/models": {
+        "n": 300,
+        "p50_ms": 0.621,
+        "p95_ms": 1.03,
+        "p99_ms": 1.206,
+        "mean_ms": 0.675
+      },
+      "/api/status": {
+        "n": 300,
+        "p50_ms": 0.493,
+        "p95_ms": 0.843,
+        "p99_ms": 1.037,
+        "mean_ms": 0.535
+      },
+      "/api/fs/tree": {
+        "n": 300,
+        "p50_ms": 0.477,
+        "p95_ms": 0.867,
+        "p99_ms": 1.05,
+        "mean_ms": 0.53
+      }
+    },
+    "concurrent": {
+      "endpoint": "/healthz",
+      "concurrency": 8,
+      "requests": 600,
+      "throughput_rps": 525.9,
+      "p50_ms": 3.044,
+      "p95_ms": 4.46
+    }
+  },
+  "policy": {
+    "cases": [
+      {
+        "name": "parent traversal",
+        "path": "../secret.txt",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path traversal is denied",
+        "latency_us": 18.04
+      },
+      {
+        "name": "nested traversal",
+        "path": "src/../../etc/passwd",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path traversal is denied",
+        "latency_us": 12.78
+      },
+      {
+        "name": "absolute outside",
+        "path": "<tmp>/secret.txt",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path is outside the authorized workspace",
+        "latency_us": 52.67
+      },
+      {
+        "name": "workspace root itself",
+        "path": ".",
+        "operation": "write",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path is outside the authorized workspace",
+        "latency_us": 23.24
+      },
+      {
+        "name": ".env read",
+        "path": ".env",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path matches a protected-file policy",
+        "latency_us": 342.92
+      },
+      {
+        "name": "nested .env",
+        "path": "app/.env",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path matches a protected-file policy",
+        "latency_us": 227.36
+      },
+      {
+        "name": ".env variant",
+        "path": "app/.env.production",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path matches a protected-file policy",
+        "latency_us": 110.09
+      },
+      {
+        "name": ".git internals",
+        "path": "repo/.git/config",
+        "operation": "write",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path matches a protected-file policy",
+        "latency_us": 112.56
+      },
+      {
+        "name": "ssh key",
+        "path": "home/id_rsa",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path matches a protected-file policy",
+        "latency_us": 123.85
+      },
+      {
+        "name": "pem file",
+        "path": "certs/server.pem",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path matches a protected-file policy",
+        "latency_us": 194.47
+      },
+      {
+        "name": "key file",
+        "path": "certs/server.key",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path matches a protected-file policy",
+        "latency_us": 319.07
+      },
+      {
+        "name": "delete without approval",
+        "path": "src/main.py",
+        "operation": "delete",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Delete operations require explicit policy approval",
+        "latency_us": 61.63
+      },
+      {
+        "name": "unknown operation",
+        "path": "src/main.py",
+        "operation": "chmod",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Unknown filesystem operation: chmod",
+        "latency_us": 39.46
+      },
+      {
+        "name": "symlink escape",
+        "path": "escape/link.txt",
+        "operation": "read",
+        "expected_allow": false,
+        "allowed": false,
+        "correct": true,
+        "reason": "Path is outside the authorized workspace",
+        "latency_us": 54.37
+      },
+      {
+        "name": "read source",
+        "path": "src/main.py",
+        "operation": "read",
+        "expected_allow": true,
+        "allowed": true,
+        "correct": true,
+        "reason": "",
+        "latency_us": 70.57
+      },
+      {
+        "name": "write source",
+        "path": "src/new_module.py",
+        "operation": "write",
+        "expected_allow": true,
+        "allowed": true,
+        "correct": true,
+        "reason": "",
+        "latency_us": 44.75
+      },
+      {
+        "name": "read nested",
+        "path": "a/b/c/d.txt",
+        "operation": "read",
+        "expected_allow": true,
+        "allowed": true,
+        "correct": true,
+        "reason": "",
+        "latency_us": 58.11
+      },
+      {
+        "name": "write docs",
+        "path": "docs/README.md",
+        "operation": "write",
+        "expected_allow": true,
+        "allowed": true,
+        "correct": true,
+        "reason": "",
+        "latency_us": 40.76
+      },
+      {
+        "name": "env-like name",
+        "path": "src/environment.py",
+        "operation": "read",
+        "expected_allow": true,
+        "allowed": true,
+        "correct": true,
+        "reason": "",
+        "latency_us": 37.81
+      },
+      {
+        "name": "read toml",
+        "path": "pyproject.toml",
+        "operation": "read",
+        "expected_allow": true,
+        "allowed": true,
+        "correct": true,
+        "reason": "",
+        "latency_us": 35.58
+      }
+    ],
+    "attacks": 14,
+    "attacks_blocked": 14,
+    "benign": 6,
+    "benign_allowed": 6,
+    "all_correct": true
+  }
+}

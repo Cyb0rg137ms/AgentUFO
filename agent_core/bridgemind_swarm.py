@@ -15,22 +15,14 @@ import ast
 import concurrent.futures
 import time
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-
-from agent_core.llm.base import BaseLLMProvider, LLMResponse
-from agent_core.sandbox import CodeExecutionSandbox
-from agent_core.hybrid_tiering import HybridTieringCoordinator, LocalModelCapability
-
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agent_core.agentufo_swarm import (
-    AgentUFOCoordinator,
     AgentUFOMode,
     SeatTokenPolicy,
-    CrewSeat,
-    BriefMessage,
-    AgentUFOExecutionReport,
 )
+from agent_core.llm.base import BaseLLMProvider
+from agent_core.sandbox import CodeExecutionSandbox
 
 # Backward-compatibility aliases for BridgeMind
 BridgeMindMode = AgentUFOMode
@@ -75,6 +67,7 @@ class SwarmAgentState:
 @dataclass
 class BridgeMindSwarmReport:
     """Consolidated report from a BridgeMind swarm execution."""
+
     task: str
     mode: BridgeMindMode
     num_agents: int
@@ -114,12 +107,36 @@ class BridgeMindSwarmCoordinator:
     """
 
     STRATEGY_PRESETS = [
-        ("Agent-Alpha", "Architect & Invariant Guard", "Rigorous boundary checks, mathematical invariants, safe zero-division/overflow handling"),
-        ("Agent-Beta", "Performance & Algorithm Engine", "Optimal asymptotic time complexity, minimal memory allocations, fast execution paths"),
-        ("Agent-Gamma", "Defensive & Robust Exception Handler", "Defensive state validation, graceful degradation, explicit type contracts"),
-        ("Agent-Delta", "Modular & Clean Architecture", "High modularity, single-responsibility functions, extensible design"),
-        ("Agent-Epsilon", "Dynamic Heuristic Explorer", "Iterative refinement, creative algorithmic formulation, edge-case probing"),
-        ("Agent-Zeta", "Syntactic & Verification Specialist", "Strict AST cleanliness, explicit assertion harnesses, deterministic reproducibility"),
+        (
+            "Agent-Alpha",
+            "Architect & Invariant Guard",
+            "Rigorous boundary checks, mathematical invariants, safe zero-division/overflow handling",
+        ),
+        (
+            "Agent-Beta",
+            "Performance & Algorithm Engine",
+            "Optimal asymptotic time complexity, minimal memory allocations, fast execution paths",
+        ),
+        (
+            "Agent-Gamma",
+            "Defensive & Robust Exception Handler",
+            "Defensive state validation, graceful degradation, explicit type contracts",
+        ),
+        (
+            "Agent-Delta",
+            "Modular & Clean Architecture",
+            "High modularity, single-responsibility functions, extensible design",
+        ),
+        (
+            "Agent-Epsilon",
+            "Dynamic Heuristic Explorer",
+            "Iterative refinement, creative algorithmic formulation, edge-case probing",
+        ),
+        (
+            "Agent-Zeta",
+            "Syntactic & Verification Specialist",
+            "Strict AST cleanliness, explicit assertion harnesses, deterministic reproducibility",
+        ),
     ]
 
     def __init__(
@@ -143,17 +160,21 @@ class BridgeMindSwarmCoordinator:
         for i in range(self.num_agents):
             preset_idx = i % len(self.STRATEGY_PRESETS)
             name, role, strat = self.STRATEGY_PRESETS[preset_idx]
-            agent_id = f"{name}-{i+1}"
-            states.append(SwarmAgentState(
-                agent_id=agent_id,
-                role_name=role,
-                strategy=strat,
-            ))
+            agent_id = f"{name}-{i + 1}"
+            states.append(
+                SwarmAgentState(
+                    agent_id=agent_id,
+                    role_name=role,
+                    strategy=strat,
+                )
+            )
         return states
 
     def _resolve_llm_for_agent(self, agent_index: int) -> Tuple[BaseLLMProvider, str]:
         """Resolves the LLM provider and tier for an agent according to token_policy."""
-        has_local = self.local_llm is not None and getattr(self.local_llm, "is_available", lambda: True)()
+        has_local = (
+            self.local_llm is not None and getattr(self.local_llm, "is_available", lambda: True)()
+        )
 
         if self.token_policy == SwarmTokenPolicy.CLOUD_ONLY or not has_local:
             return self.cloud_llm, "cloud"
@@ -165,7 +186,9 @@ class BridgeMindSwarmCoordinator:
 
         if self.token_policy == SwarmTokenPolicy.ALL:
             # All agents attempt local offload where possible
-            return (self.local_llm if has_local else self.cloud_llm), ("local" if has_local else "cloud")
+            return (self.local_llm if has_local else self.cloud_llm), (
+                "local" if has_local else "cloud"
+            )
 
         return self.cloud_llm, "cloud"
 
@@ -185,7 +208,9 @@ class BridgeMindSwarmCoordinator:
             )
 
         if self.mode == BridgeMindMode.COMPETITIVE_CONSENSUS:
-            return self._run_competitive_consensus(task_description, agent_states, progress_callback, t0)
+            return self._run_competitive_consensus(
+                task_description, agent_states, progress_callback, t0
+            )
         else:
             return self._run_split_work(task_description, agent_states, progress_callback, t0)
 
@@ -244,17 +269,18 @@ class BridgeMindSwarmCoordinator:
             state.elapsed_time_s = time.perf_counter() - w_start
             return state
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(16, self.num_agents)) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(16, self.num_agents)
+        ) as executor:
             future_to_agent = {
-                executor.submit(_worker, i, agent): agent
-                for i, agent in enumerate(agents)
+                executor.submit(_worker, i, agent): agent for i, agent in enumerate(agents)
             }
             completed = 0
             for fut in concurrent.futures.as_completed(future_to_agent):
                 completed += 1
                 try:
                     updated = fut.result()
-                    total_tokens_consumed += (updated.prompt_tokens + updated.completion_tokens)
+                    total_tokens_consumed += updated.prompt_tokens + updated.completion_tokens
                     total_tokens_saved += updated.saved_tokens
                 except Exception:
                     pass
@@ -302,7 +328,10 @@ class BridgeMindSwarmCoordinator:
             total_tokens_consumed=total_tokens_consumed,
             total_tokens_saved=total_tokens_saved,
             elapsed_time_s=elapsed,
-            details={"champion_strategy": winner.strategy, "valid_candidates_count": len(valid_agents)},
+            details={
+                "champion_strategy": winner.strategy,
+                "valid_candidates_count": len(valid_agents),
+            },
         )
 
     def _run_split_work(
@@ -332,7 +361,9 @@ class BridgeMindSwarmCoordinator:
             if line.strip().upper().startswith("SUBTASK") and ":" in line
         ]
         while len(subtask_lines) < self.num_agents:
-            subtask_lines.append(f"Subsystem module {len(subtask_lines)+1} for: {task_description}")
+            subtask_lines.append(
+                f"Subsystem module {len(subtask_lines) + 1} for: {task_description}"
+            )
 
         def _subtask_worker(idx: int, state: SwarmAgentState, subtask_desc: str) -> SwarmAgentState:
             w_start = time.perf_counter()
@@ -364,7 +395,9 @@ class BridgeMindSwarmCoordinator:
             state.elapsed_time_s = time.perf_counter() - w_start
             return state
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(16, self.num_agents)) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(16, self.num_agents)
+        ) as executor:
             futures = [
                 executor.submit(_subtask_worker, i, agents[i], subtask_lines[i])
                 for i in range(self.num_agents)
@@ -374,7 +407,7 @@ class BridgeMindSwarmCoordinator:
                 completed += 1
                 try:
                     res = fut.result()
-                    total_tokens_consumed += (res.prompt_tokens + res.completion_tokens)
+                    total_tokens_consumed += res.prompt_tokens + res.completion_tokens
                     total_tokens_saved += res.saved_tokens
                 except Exception:
                     pass
@@ -387,7 +420,11 @@ class BridgeMindSwarmCoordinator:
                     )
 
         # Phase 2: Synthesis pass via Cloud Leader
-        parts = [f"// Component {a.agent_id} ({a.role_name}):\n{a.candidate_code}" for a in agents if a.candidate_code]
+        parts = [
+            f"// Component {a.agent_id} ({a.role_name}):\n{a.candidate_code}"
+            for a in agents
+            if a.candidate_code
+        ]
         synth_prompt = (
             f"TARGET GOAL: {task_description}\n"
             f"MODULAR COMPONENTS IMPLEMENTED BY SWARM AGENTS:\n" + "\n\n".join(parts) + "\n\n"
@@ -423,9 +460,12 @@ class BridgeMindSwarmCoordinator:
         is_html = "<html" in code.lower() or "<canvas" in code.lower()
 
         if is_html:
-            if "<canvas" in code.lower(): score += 0.20
-            if "<script" in code.lower() or "function" in code.lower(): score += 0.15
-            if "addeventlistener" in code.lower() or "requestanimationframe" in code.lower(): score += 0.10
+            if "<canvas" in code.lower():
+                score += 0.20
+            if "<script" in code.lower() or "function" in code.lower():
+                score += 0.15
+            if "addeventlistener" in code.lower() or "requestanimationframe" in code.lower():
+                score += 0.10
             return min(0.99, score)
 
         # Python evaluation
@@ -433,7 +473,11 @@ class BridgeMindSwarmCoordinator:
             tree = ast.parse(code)
             score += 0.25  # Valid AST
             # Count functions and classes
-            fns = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+            fns = [
+                n
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ]
             if len(fns) >= 1:
                 score += 0.10
             # Check for defensive handling (If statements or try blocks)

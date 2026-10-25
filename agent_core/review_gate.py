@@ -13,21 +13,23 @@ from __future__ import annotations
 
 import difflib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 from agent_core.sandbox import CodeExecutionSandbox
 
 
 class ReviewGateRejectedError(Exception):
     """Raised when code fails sandbox test verification after the maximum allowed repair attempt."""
+
     pass
 
 
 @dataclass
 class ReviewGateReport:
     """Detailed audit report produced by the Review Gate."""
+
     task: str
     status: str  # "PASSED", "PASSED_AFTER_REPAIR", "REJECTED"
     passed: bool
@@ -65,7 +67,12 @@ class ReviewGate:
     Has the authority to reject and veto code that fails tests.
     """
 
-    def __init__(self, sandbox: Optional[CodeExecutionSandbox] = None, timeout_seconds: float = 5.0, timeout: Optional[float] = None) -> None:
+    def __init__(
+        self,
+        sandbox: Optional[CodeExecutionSandbox] = None,
+        timeout_seconds: float = 5.0,
+        timeout: Optional[float] = None,
+    ) -> None:
         actual_timeout = timeout if timeout is not None else timeout_seconds
         self.sandbox = sandbox or CodeExecutionSandbox(timeout_seconds=actual_timeout)
         self.timeout_seconds = actual_timeout
@@ -221,7 +228,20 @@ class ReviewGate:
                 return False, "Project test overlay rejected: candidate path escapes the workspace."
             candidate_rel = candidate.relative_to(root)
 
-        excluded_dirs = {".git", ".agentufo", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", "dist", "build", "target", ".mypy_cache", ".ruff_cache"}
+        excluded_dirs = {
+            ".git",
+            ".agentufo",
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            ".pytest_cache",
+            "dist",
+            "build",
+            "target",
+            ".mypy_cache",
+            ".ruff_cache",
+        }
         excluded_words = ("secret", "credential", "api_key", "apikey", "password", "token")
         try:
             with tempfile.TemporaryDirectory(prefix="agentufo-review-") as tmp:
@@ -236,7 +256,11 @@ class ReviewGate:
                     target_dir.mkdir(parents=True, exist_ok=True)
                     for name in files:
                         low = name.lower()
-                        if low in {".env", ".env.local", ".env.production"} or any(word in low for word in excluded_words) or low.endswith((".pem", ".p12", ".key", ".secret")):
+                        if (
+                            low in {".env", ".env.local", ".env.production"}
+                            or any(word in low for word in excluded_words)
+                            or low.endswith((".pem", ".p12", ".key", ".secret"))
+                        ):
                             continue
                         src = Path(current) / name
                         if src.is_symlink():
@@ -250,7 +274,10 @@ class ReviewGate:
                         total_bytes += size
                         copied_files += 1
                         if total_bytes > 100 * 1024 * 1024 or copied_files > 5000:
-                            return False, "Project test overlay exceeded safety limits (100 MiB or 5,000 files); merge rejected rather than testing the live workspace."
+                            return (
+                                False,
+                                "Project test overlay exceeded safety limits (100 MiB or 5,000 files); merge rejected rather than testing the live workspace.",
+                            )
                         dst = target_dir / name
                         try:
                             shutil.copy2(src, dst)
@@ -273,13 +300,29 @@ class ReviewGate:
                 else:
                     cmd = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]
                 try:
-                    res = subprocess.run(cmd, cwd=str(overlay), env=env, capture_output=True, text=True, timeout=max(10.0, self.timeout_seconds))
+                    res = subprocess.run(
+                        cmd,
+                        cwd=str(overlay),
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=max(10.0, self.timeout_seconds),
+                    )
                     out = (res.stdout + "\n" + res.stderr).strip()
                     if res.returncode == 0 and "Ran 0 tests" in out:
-                        return False, "Project test discovery found zero executable tests; refusing to treat that as verification."
-                    return res.returncode == 0, out or f"Test command exited {res.returncode} with no output."
+                        return (
+                            False,
+                            "Project test discovery found zero executable tests; refusing to treat that as verification.",
+                        )
+                    return (
+                        res.returncode == 0,
+                        out or f"Test command exited {res.returncode} with no output.",
+                    )
                 except subprocess.TimeoutExpired:
-                    return False, f"Project test execution timed out after {max(10.0, self.timeout_seconds)} seconds."
+                    return (
+                        False,
+                        f"Project test execution timed out after {max(10.0, self.timeout_seconds)} seconds.",
+                    )
         except Exception as exc:
             return False, f"Failed to create isolated project test overlay: {exc}"
 
@@ -305,7 +348,9 @@ class ReviewGate:
         # Step 2: Run repository project tests if root provided
         proj_ok, proj_out = True, ""
         if project_root and fixture_ok:
-            proj_ok, proj_out = self.run_project_tests(project_root, target_file, candidate_content=code_candidate)
+            proj_ok, proj_out = self.run_project_tests(
+                project_root, target_file, candidate_content=code_candidate
+            )
 
         first_pass = fixture_ok and proj_ok
         initial_out = f"Fixture Output:\n{fixture_out}\n\nProject Test Output:\n{proj_out}".strip()
@@ -360,10 +405,14 @@ class ReviewGate:
 
         rep_proj_ok, rep_proj_out = True, ""
         if project_root and rep_fixture_ok:
-            rep_proj_ok, rep_proj_out = self.run_project_tests(project_root, target_file, candidate_content=repaired_code)
+            rep_proj_ok, rep_proj_out = self.run_project_tests(
+                project_root, target_file, candidate_content=repaired_code
+            )
 
         repair_pass = rep_fixture_ok and rep_proj_ok
-        final_out = f"Fixture Output:\n{rep_fixture_out}\n\nProject Test Output:\n{rep_proj_out}".strip()
+        final_out = (
+            f"Fixture Output:\n{rep_fixture_out}\n\nProject Test Output:\n{rep_proj_out}".strip()
+        )
 
         diff = difflib.unified_diff(
             code_candidate.splitlines(),

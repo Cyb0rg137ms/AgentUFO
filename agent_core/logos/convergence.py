@@ -15,13 +15,14 @@ Now with LLM as the brain for dynamic property extraction and UML synthesis.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
 class FrameworkAnalysisResult:
     """Output of an individual framework evaluation."""
+
     framework_name: str
     paradigm: str
     properties: List[str]
@@ -44,6 +45,7 @@ class FrameworkAnalysisResult:
 @dataclass
 class PropertyAlignmentEntry:
     """A row in the Property Alignment Matrix."""
+
     subquestion_id: str
     dimension: str
     framework_1_property: str
@@ -70,7 +72,7 @@ class DualFrameworkConvergenceEngine:
             "        direction TB",
         ]
         for i, entry in enumerate(alignment_matrix, start=1):
-            dim_clean = re.sub(r'[^a-zA-Z0-9_]', '_', entry.dimension)
+            dim_clean = re.sub(r"[^a-zA-Z0-9_]", "_", entry.dimension)
             lines.append(f"        F1_{i}[{entry.dimension}: {entry.framework_1_property[:35]}...]")
         lines.append("    end")
         lines.append("    subgraph F2[Framework 2: Theory 2 Structural Invariants]")
@@ -80,7 +82,9 @@ class DualFrameworkConvergenceEngine:
         lines.append("    end")
         lines.append("    subgraph Synthesis[Unified Convergence Matrix]")
         for i, entry in enumerate(alignment_matrix, start=1):
-            lines.append(f"        Syn_{i}[Aligned Invariant {i}: {entry.synthesized_property[:40]}...]")
+            lines.append(
+                f"        Syn_{i}[Aligned Invariant {i}: {entry.synthesized_property[:40]}...]"
+            )
             lines.append(f"        F1_{i} --> Syn_{i}")
             lines.append(f"        F2_{i} --> Syn_{i}")
         lines.append("    end")
@@ -198,7 +202,9 @@ class DualFrameworkConvergenceEngine:
         complexity = "Ultrametric tree depth = 1, Zero information leakage"
 
         if "divide" in t_low or "division" in t_low:
-            props.append("Zero divisor forms a singular boundary attractor: map to neutral element (0).")
+            props.append(
+                "Zero divisor forms a singular boundary attractor: map to neutral element (0)."
+            )
         elif "element" in t_low or "index" in t_low:
             props.append("Coordinate projection outside manifold returns null element (None).")
 
@@ -228,8 +234,12 @@ class DualFrameworkConvergenceEngine:
             PropertyAlignmentEntry(
                 subquestion_id="SQ-3",
                 dimension="Boundary Invariants",
-                framework_1_property=f1.properties[3] if len(f1.properties) > 3 else f1.properties[-1],
-                framework_2_property=f2.properties[3] if len(f2.properties) > 3 else f2.properties[-1],
+                framework_1_property=f1.properties[3]
+                if len(f1.properties) > 3
+                else f1.properties[-1],
+                framework_2_property=f2.properties[3]
+                if len(f2.properties) > 3
+                else f2.properties[-1],
                 congruence_score=0.98,
                 synthesized_property="Explicit pre-condition gate checking bounds before operator evaluation.",
             )

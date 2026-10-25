@@ -12,6 +12,7 @@ import json
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
+
 from agent_core.llm.base import BaseLLMProvider, LLMResponse
 
 
@@ -42,6 +43,7 @@ class OllamaProvider(BaseLLMProvider):
     def is_available(self, use_cache: bool = False) -> bool:
         """Verifies whether the Ollama server is running locally (fast non-blocking check)."""
         import time
+
         now = time.time()
         if use_cache and self._cached_availability and (now - self._cached_availability[1]) < 3.0:
             return self._cached_availability[0]
@@ -50,7 +52,7 @@ class OllamaProvider(BaseLLMProvider):
         try:
             req = urllib.request.Request(f"{self.host}/api/version", method="GET")
             with urllib.request.urlopen(req, timeout=0.4) as resp:
-                available = (resp.status == 200)
+                available = resp.status == 200
         except Exception:
             available = False
 
@@ -220,6 +222,4 @@ class OllamaProvider(BaseLLMProvider):
                 finish_reason="stop" if res_json.get("done") else None,
             )
         except urllib.error.URLError as e:
-            raise ConnectionError(
-                f"Failed to connect to local Ollama daemon at {self.host}: {e}"
-            )
+            raise ConnectionError(f"Failed to connect to local Ollama daemon at {self.host}: {e}")
