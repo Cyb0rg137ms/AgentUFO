@@ -245,13 +245,15 @@ class TraceAndPermissionTests(unittest.TestCase):
 
         sandbox = CodeExecutionSandbox(timeout_seconds=0.2)
         self.assertEqual(sandbox.mode, "container")
+        # Both calls simulate "no container runtime" so the result does not depend on
+        # whether the CI runner happens to have Docker installed.
         with mock.patch("agent_core.sandbox.shutil.which", return_value=None):
             ok, output = sandbox.execute_script(
                 "print('must not execute on host')", filename="main.py"
             )
-        self.assertFalse(ok)
-        self.assertIn("unsafe host fallback is disabled", output)
-        ok, output = sandbox.execute_project({"main.py": "print(1)"}, "main.py")
+            self.assertFalse(ok)
+            self.assertIn("unsafe host fallback is disabled", output)
+            ok, output = sandbox.execute_project({"main.py": "print(1)"}, "main.py")
         self.assertFalse(ok)
         self.assertIn("unsafe host fallback is disabled", output)
 
